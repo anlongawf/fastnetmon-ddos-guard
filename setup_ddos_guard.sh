@@ -29,6 +29,23 @@ header(){
     echo -e "${C_BOLD}${C_BLUE}════════════════════════════════════════════════════════════════════${C_RESET}"
 }
 
+# Đọc input an toàn cho cả khi chạy qua pipe: curl -sSL ... | sudo bash
+prompt_read() {
+    local prompt_text="$1"
+    local var_name="$2"
+    local def_val="${3:-}"
+    local user_input=""
+
+    if [[ -t 0 ]]; then
+        read -rp "$prompt_text" user_input || user_input=""
+    elif [[ -c /dev/tty ]]; then
+        read -rp "$prompt_text" user_input </dev/tty || user_input=""
+    else
+        read -rp "$prompt_text" user_input || user_input=""
+    fi
+    eval "$var_name=\"\${user_input:-$def_val}\""
+}
+
 # -----------------------------------------------------------------------------
 # 0. KIỂM TRA QUYỀN ROOT
 # -----------------------------------------------------------------------------
@@ -68,14 +85,12 @@ done
 
 DEFAULT_IFACE="${DETECTED_IFACES[0]:-eth0}"
 info "Card mạng đề xuất: ${C_BOLD}${DEFAULT_IFACE}${C_RESET}"
-read -rp "Nhập tên card mạng theo dõi [Mặc định: $DEFAULT_IFACE]: " INPUT_IFACE
-SELECTED_IFACE="${INPUT_IFACE:-$DEFAULT_IFACE}"
+prompt_read "Nhập tên card mạng theo dõi [Mặc định: $DEFAULT_IFACE]: " SELECTED_IFACE "$DEFAULT_IFACE"
 
 # Lấy Public IP
 DETECTED_IP=$(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null || ip route get 1.1.1.1 2>/dev/null | awk '{print $7}' | head -1 || echo "")
 info "Public IP máy chủ phát hiện: ${C_BOLD}${DETECTED_IP:-Chưa xác định}${C_RESET}"
-read -rp "Nhập Public IP của máy chủ [Mặc định: $DETECTED_IP]: " INPUT_IP
-SERVER_PUBLIC_IP="${INPUT_IP:-$DETECTED_IP}"
+prompt_read "Nhập Public IP của máy chủ [Mặc định: $DETECTED_IP]: " SERVER_PUBLIC_IP "$DETECTED_IP"
 
 if [[ -z "$SERVER_PUBLIC_IP" ]]; then
     err "IP máy chủ không được để trống!"
@@ -96,7 +111,7 @@ echo -e "  ${C_BOLD}[5]${C_RESET} 🎮 Custom Game (Tự cấu hình game khác)
 echo ""
 
 while true; do
-    read -rp "Nhập số lựa chọn [1-5]: " GAME_CHOICE
+    prompt_read "Nhập số lựa chọn [1-5]: " GAME_CHOICE "1"
     case "$GAME_CHOICE" in
         1)
             GAME_NAME="Minecraft"
@@ -139,8 +154,8 @@ while true; do
             break
             ;;
         5)
-            read -rp "Nhập tên Game: " CUSTOM_NAME
-            GAME_NAME="${CUSTOM_NAME:-Custom Game}"
+            prompt_read "Nhập tên Game: " CUSTOM_NAME "Custom Game"
+            GAME_NAME="$CUSTOM_NAME"
             GAME_ICON="🎮 $GAME_NAME"
             DEF_PORT_RANGE="20000-30000"
             DEF_PROTO="udp/tcp"
@@ -163,8 +178,7 @@ pass "Đã chọn cấu hình cho: ${C_BOLD}$GAME_NAME${C_RESET}"
 header "BƯỚC 3: NHẬP RANGE PORT GAME"
 
 info "Bạn có thể tự nhập port đơn lẻ, dải port (ví dụ: 25565-25600) hoặc danh sách."
-read -rp "Nhập Range Port của $GAME_NAME [Mặc định: $DEF_PORT_RANGE]: " USER_PORT_RANGE
-CONFIG_PORT_RANGE="${USER_PORT_RANGE:-$DEF_PORT_RANGE}"
+prompt_read "Nhập Range Port của $GAME_NAME [Mặc định: $DEF_PORT_RANGE]: " CONFIG_PORT_RANGE "$DEF_PORT_RANGE"
 pass "Range port đã thiết lập: ${C_BOLD}$CONFIG_PORT_RANGE${C_RESET}"
 
 # -----------------------------------------------------------------------------
@@ -179,21 +193,13 @@ echo -e "  - Ngưỡng kết nối (Flows): ${C_BOLD}${DEF_FLOWS}${C_RESET} flow
 echo -e "  - Thời gian ban port: ${C_BOLD}900${C_RESET} giây (15 phút)"
 echo ""
 
-read -rp "Bạn có muốn dùng thông số đề xuất trên không? [Y/n]: " USE_DEF_THRESHOLDS
-USE_DEF_THRESHOLDS="${USE_DEF_THRESHOLDS:-Y}"
+prompt_read "Bạn có muốn dùng thông số đề xuất trên không? [Y/n]: " USE_DEF_THRESHOLDS "Y"
 
 if [[ "$USE_DEF_THRESHOLDS" =~ ^[Nn]$ ]]; then
-    read -rp "Nhập threshold_pps [Mặc định: $DEF_PPS]: " INPUT_PPS
-    CONFIG_PPS="${INPUT_PPS:-$DEF_PPS}"
-
-    read -rp "Nhập threshold_mbps [Mặc định: $DEF_MBPS]: " INPUT_MBPS
-    CONFIG_MBPS="${INPUT_MBPS:-$DEF_MBPS}"
-
-    read -rp "Nhập threshold_flows [Mặc định: $DEF_FLOWS]: " INPUT_FLOWS
-    CONFIG_FLOWS="${INPUT_FLOWS:-$DEF_FLOWS}"
-
-    read -rp "Nhập thời gian ban (giây) [Mặc định: 900]: " INPUT_BAN_TIME
-    CONFIG_BAN_TIME="${INPUT_BAN_TIME:-900}"
+    prompt_read "Nhập threshold_pps [Mặc định: $DEF_PPS]: " CONFIG_PPS "$DEF_PPS"
+    prompt_read "Nhập threshold_mbps [Mặc định: $DEF_MBPS]: " CONFIG_MBPS "$DEF_MBPS"
+    prompt_read "Nhập threshold_flows [Mặc định: $DEF_FLOWS]: " CONFIG_FLOWS "$DEF_FLOWS"
+    prompt_read "Nhập thời gian ban (giây) [Mặc định: 900]: " CONFIG_BAN_TIME "900"
 else
     CONFIG_PPS="$DEF_PPS"
     CONFIG_MBPS="$DEF_MBPS"
@@ -210,12 +216,10 @@ header "BƯỚC 5: TÍCH HỢP DISCORD & PTERODACTYL (TÙY CHỌN)"
 
 # Discord Webhook
 echo -e "Nhập link Discord Webhook để nhận thông báo embed khi bị tấn công & khi mở port:"
-read -rp "Discord Webhook URL (bấm Enter để bỏ qua): " INPUT_DISCORD_URL
-DISCORD_URL="${INPUT_DISCORD_URL:-https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN}"
+prompt_read "Discord Webhook URL (bấm Enter để bỏ qua): " DISCORD_URL "https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN"
 
 # Pterodactyl Panel
-read -rp "Bạn có muốn kích hoạt tự động Suspend/Kill server trên Pterodactyl khi bị DDoS? [y/N]: " ENABLE_PTERO
-ENABLE_PTERO="${ENABLE_PTERO:-N}"
+prompt_read "Bạn có muốn kích hoạt tự động Suspend/Kill server trên Pterodactyl khi bị DDoS? [y/N]: " ENABLE_PTERO "N"
 
 PTERO_ENABLED="false"
 PTERO_URL="https://panel.yourdomain.com"
@@ -224,10 +228,9 @@ PTERO_ACT="suspend"
 
 if [[ "$ENABLE_PTERO" =~ ^[Yy]$ ]]; then
     PTERO_ENABLED="true"
-    read -rp "Nhập URL Pterodactyl Panel (VD: https://panel.domain.com): " PTERO_URL
-    read -rp "Nhập Pterodactyl Application API Key (bắt đầu bằng ptla_...): " PTERO_KEY
-    read -rp "Hành động khi bị DDoS (suspend/kill) [Mặc định: suspend]: " INPUT_PTERO_ACT
-    PTERO_ACT="${INPUT_PTERO_ACT:-suspend}"
+    prompt_read "Nhập URL Pterodactyl Panel (VD: https://panel.domain.com): " PTERO_URL "https://panel.yourdomain.com"
+    prompt_read "Nhập Pterodactyl Application API Key (bắt đầu bằng ptla_...): " PTERO_KEY "ptla_YOUR_APPLICATION_API_KEY"
+    prompt_read "Hành động khi bị DDoS (suspend/kill) [Mặc định: suspend]: " PTERO_ACT "suspend"
 fi
 
 # -----------------------------------------------------------------------------
@@ -238,6 +241,7 @@ header "BƯỚC 6: TRIỂN KHAI CẤU HÌNH HỆ THỐNG"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_DIR="/opt/fastnetmon_guard"
 TARGET_SCRIPT="$TARGET_DIR/notify_script.sh"
+REPO_RAW="https://raw.githubusercontent.com/anlongawf/fastnetmon-ddos-guard/main"
 
 info "Đang tạo các thư mục cần thiết..."
 mkdir -p "$TARGET_DIR"
@@ -245,6 +249,36 @@ mkdir -p /etc/fastnetmon_guard
 mkdir -p /var/log/fastnetmon_guard
 mkdir -p /var/lib/fastnetmon_guard
 mkdir -p /tmp/fastnetmon_dump_cache
+
+# Hàm đảm bảo file thành phần luôn sẵn sàng (ưu tiên local, tự tải từ GitHub nếu chạy standalone)
+ensure_component() {
+    local filename="$1"
+    local dest_path="$2"
+    local is_exec="${3:-false}"
+
+    if [[ -f "$SCRIPT_DIR/$filename" ]]; then
+        cp "$SCRIPT_DIR/$filename" "$dest_path"
+        pass "Đã cài đặt $filename (từ thư mục cục bộ)"
+    else
+        info "Đang tải $filename từ repository chính thức..."
+        if curl -sSL --connect-timeout 8 "$REPO_RAW/$filename" -o "$dest_path" && [[ -s "$dest_path" ]]; then
+            pass "Đã tải $filename thành công"
+        else
+            err "Không thể tải $filename từ $REPO_RAW/$filename!"
+            exit 1
+        fi
+    fi
+
+    if [[ "$is_exec" == "true" ]]; then
+        chmod +x "$dest_path"
+    fi
+}
+
+info "Đang triển khai các thành phần hệ thống vào $TARGET_DIR..."
+ensure_component "notify_script.sh"   "$TARGET_SCRIPT"                "true"
+ensure_component "compile_xdp.sh"     "$TARGET_DIR/compile_xdp.sh"    "true"
+ensure_component "xdp_guard.c"        "$TARGET_DIR/xdp_guard.c"       "false"
+ensure_component "test_ddos_guard.sh" "$TARGET_DIR/test_ddos_guard.sh" "true"
 
 # Tạo file cấu hình độc lập /etc/fastnetmon_guard/guard.conf
 info "Đang tạo file cấu hình /etc/fastnetmon_guard/guard.conf..."
@@ -261,18 +295,6 @@ DEFAULT_BAN_DURATION="$CONFIG_BAN_TIME"
 CONF
 chmod 600 /etc/fastnetmon_guard/guard.conf
 pass "Đã lưu cấu hình an toàn tại /etc/fastnetmon_guard/guard.conf"
-
-# Copy và cấp quyền cho notify_script.sh
-info "Đang triển khai notify_script.sh vào $TARGET_SCRIPT..."
-if [[ -f "$SCRIPT_DIR/notify_script.sh" ]]; then
-    cp "$SCRIPT_DIR/notify_script.sh" "$TARGET_SCRIPT"
-else
-    err "Không tìm thấy notify_script.sh tại $SCRIPT_DIR!"
-    exit 1
-fi
-
-chmod +x "$TARGET_SCRIPT"
-pass "Đã cài đặt notify_script.sh thành công!"
 
 # Ghi IP vào /etc/fastnetmon_networks_list
 info "Đang ghi danh sách mạng /etc/fastnetmon_networks_list..."
@@ -373,15 +395,9 @@ fi
 # -----------------------------------------------------------------------------
 header "BƯỚC 8: TÍCH HỢP XDP eBPF ENGINE (TÙY CHỌN)"
 
-# Copy XDP tools vào thư mục hệ thống
-cp "$SCRIPT_DIR/compile_xdp.sh" "$TARGET_DIR/" 2>/dev/null || true
-cp "$SCRIPT_DIR/xdp_guard.c" "$TARGET_DIR/" 2>/dev/null || true
-chmod +x "$TARGET_DIR/compile_xdp.sh" 2>/dev/null || true
-
 echo -e "XDP (eXpress Data Path) cho phép drop gói tin DDoS ngay tại tầng card mạng"
 echo -e "với tốc độ ${C_BOLD}10.000.000 - 20.000.000+ PPS${C_RESET} (tiết kiệm 95% CPU so với thông thường)."
-read -rp "Bạn có muốn kích hoạt XDP Engine trên $SELECTED_IFACE ngay bây giờ? [y/N]: " ENABLE_XDP
-ENABLE_XDP="${ENABLE_XDP:-N}"
+prompt_read "Bạn có muốn kích hoạt XDP Engine trên $SELECTED_IFACE ngay bây giờ? [y/N]: " ENABLE_XDP "N"
 
 if [[ "$ENABLE_XDP" =~ ^[Yy]$ ]]; then
     info "Đang tiến hành biên dịch và nạp XDP trên $SELECTED_IFACE..."
@@ -410,6 +426,12 @@ echo -e "  ⏱️  Thời gian ngắt    : ${C_BOLD}${CONFIG_BAN_TIME} giây (${
 echo -e "  📜 Script xử lý      : ${C_BOLD}${TARGET_SCRIPT}${C_RESET}"
 echo -e "  📋 File cấu hình     : ${C_BOLD}/etc/fastnetmon.conf${C_RESET}"
 echo ""
-echo -e "${C_CYAN}Để chạy kiểm tra toàn diện, bạn có thể thực thi:${C_RESET}"
-echo -e "  ${C_BOLD}bash $SCRIPT_DIR/test_ddos_guard.sh${C_RESET}"
+
+prompt_read "Bạn có muốn chạy bộ kiểm thử hệ thống (test_ddos_guard.sh) ngay bây giờ? [y/N]: " RUN_TEST "N"
+if [[ "$RUN_TEST" =~ ^[Yy]$ ]]; then
+    bash "$TARGET_DIR/test_ddos_guard.sh"
+else
+    echo -e "${C_CYAN}Để chạy kiểm tra toàn diện sau, bạn có thể thực thi:${C_RESET}"
+    echo -e "  ${C_BOLD}sudo bash $TARGET_DIR/test_ddos_guard.sh${C_RESET}"
+fi
 echo ""

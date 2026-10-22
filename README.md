@@ -38,17 +38,20 @@ Hệ thống phát hiện DDoS tự động bằng **FastNetMon Community** kế
 
 ## 🚀 Cài Đặt Nhanh
 
-### 1. Tải về máy chủ
+### Cách 1: 1-Click Install (Khuyến nghị - Không cần clone git)
+
+Chỉ cần chạy duy nhất 1 dòng lệnh trên máy chủ Linux:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/anlongawf/fastnetmon-ddos-guard/main/setup_ddos_guard.sh | sudo bash
+```
+
+### Cách 2: Clone repository thủ công
 
 ```bash
 git clone https://github.com/anlongawf/fastnetmon-ddos-guard.git
 cd fastnetmon-ddos-guard
-chmod +x setup_ddos_guard.sh test_ddos_guard.sh
-```
-
-### 2. Chạy kịch bản cài đặt tự động
-
-```bash
+chmod +x setup_ddos_guard.sh test_ddos_guard.sh compile_xdp.sh
 sudo bash setup_ddos_guard.sh
 ```
 
