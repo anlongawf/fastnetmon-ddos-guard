@@ -73,6 +73,39 @@ echo -e "${C_BOLD}Hệ thống tự động ngắt PORT tầng Kernel khi bị D
 # -----------------------------------------------------------------------------
 header "BƯỚC 1: KIỂM TRA HỆ THỐNG & CARD MẠNG"
 
+# Tự động kiểm tra & cài đặt FastNetMon Community nếu chưa có
+install_fastnetmon_if_missing() {
+    if command -v fastnetmon &>/dev/null; then
+        pass "FastNetMon đã có sẵn trên hệ thống: $(command -v fastnetmon)"
+        return 0
+    fi
+
+    info "Chưa tìm thấy FastNetMon. Đang tự động cài đặt FastNetMon Community (APT Universe)..."
+    if command -v apt-get &>/dev/null; then
+        apt-get update -y
+        apt-get install -y software-properties-common curl wget jq iptables || true
+        add-apt-repository -y universe 2>/dev/null || true
+        apt-get update -y
+        if apt-get install -y fastnetmon; then
+            pass "Đã cài đặt FastNetMon Community thành công qua APT!"
+        elif command -v snap &>/dev/null; then
+            info "Cài qua APT thất bại, chuyển sang Snap..."
+            snap install fastnetmon-community --edge && pass "Đã cài đặt FastNetMon qua Snap!" || true
+        fi
+    elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
+        yum install -y epel-release || true
+        yum install -y fastnetmon || true
+    fi
+
+    if command -v fastnetmon &>/dev/null; then
+        pass "FastNetMon đã cài đặt thành công: $(command -v fastnetmon)"
+    else
+        warn "Không thể tự động cài FastNetMon qua package manager. Bạn có thể cài sau: sudo apt install -y fastnetmon"
+    fi
+}
+
+install_fastnetmon_if_missing
+
 # Số CPU cores
 CPU_CORES=$(nproc 2>/dev/null || echo 2)
 info "Số CPU cores phát hiện: ${C_BOLD}${CPU_CORES}${C_RESET} (netflow_workers = $CPU_CORES)"
