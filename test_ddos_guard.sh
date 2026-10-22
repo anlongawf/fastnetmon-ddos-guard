@@ -678,12 +678,13 @@ test_11_xdp_engine() {
         fail "Hàm port_to_hex_bytes sai kết quả: $port_hex"
     fi
 
-    # 4. Kiểm tra xử lý an toàn giá trị port không phải số (icmp)
-    local icmp_port_hex proto_udp_hex proto_tcp_hex proto_icmp_hex
+    # 4. Kiểm tra xử lý an toàn giá trị port không phải số (icmp) và all protocols
+    local icmp_port_hex proto_udp_hex proto_tcp_hex proto_icmp_hex proto_all_hex
     icmp_port_hex=$(bash -c "source '$xdp_mgr' 2>/dev/null; port_to_hex_bytes icmp" 2>/dev/null || echo "error")
     proto_udp_hex=$(bash -c "source '$xdp_mgr' 2>/dev/null; proto_to_hex UDP" 2>/dev/null || echo "error")
     proto_tcp_hex=$(bash -c "source '$xdp_mgr' 2>/dev/null; proto_to_hex tcp" 2>/dev/null || echo "error")
     proto_icmp_hex=$(bash -c "source '$xdp_mgr' 2>/dev/null; proto_to_hex ICMP" 2>/dev/null || echo "error")
+    proto_all_hex=$(bash -c "source '$xdp_mgr' 2>/dev/null; proto_to_hex all" 2>/dev/null || echo "error")
 
     if [[ "$icmp_port_hex" == "00 00" ]]; then
         pass "Hàm port_to_hex_bytes xử lý an toàn port non-numeric 'icmp' -> $icmp_port_hex (không lỗi unbound variable)"
@@ -691,10 +692,10 @@ test_11_xdp_engine() {
         fail "Hàm port_to_hex_bytes lỗi khi xử lý 'icmp': $icmp_port_hex"
     fi
 
-    if [[ "$proto_udp_hex" == "11" && "$proto_tcp_hex" == "06" && "$proto_icmp_hex" == "01" ]]; then
-        pass "Hàm proto_to_hex chuyển đổi chính xác (UDP->$proto_udp_hex, TCP->$proto_tcp_hex, ICMP->$proto_icmp_hex)"
+    if [[ "$proto_udp_hex" == "11" && "$proto_tcp_hex" == "06" && "$proto_icmp_hex" == "01" && "$proto_all_hex" == "00" ]]; then
+        pass "Hàm proto_to_hex chuyển đổi chính xác (UDP->$proto_udp_hex, TCP->$proto_tcp_hex, ICMP->$proto_icmp_hex, ALL->$proto_all_hex)"
     else
-        fail "Hàm proto_to_hex lỗi: UDP=$proto_udp_hex TCP=$proto_tcp_hex ICMP=$proto_icmp_hex"
+        fail "Hàm proto_to_hex lỗi: UDP=$proto_udp_hex TCP=$proto_tcp_hex ICMP=$proto_icmp_hex ALL=$proto_all_hex"
     fi
 }
 

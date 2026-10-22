@@ -379,6 +379,48 @@ db_unlock() {
 block_port() {
     local port="$1" proto="${2:-udp}" target_ip="$3"
 
+    # Xử lý riêng cho giao thức ICMP
+    if [[ "$port" == "icmp" || "$proto" == "icmp" ]]; then
+        log "info" "Chặn giao thức ICMP (IP: $target_ip)"
+        init_iptables_chain
+
+        if ! "$IPT_CMD" -t "$IPTABLES_TABLE" -C "$IPTABLES_CHAIN" \
+                -p icmp -d "$target_ip" -j DROP 2>/dev/null; then
+            "$IPT_CMD" -t "$IPTABLES_TABLE" -A "$IPTABLES_CHAIN" \
+                -p icmp -d "$target_ip" -j DROP
+            log "info" "DROP rule ICMP thêm: -p icmp -d $target_ip"
+        else
+            log "info" "DROP rule ICMP đã tồn tại: -p icmp -d $target_ip"
+        fi
+
+        local ts; ts=$(date '+%Y-%m-%d %H:%M:%S')
+        local unban_ts
+        unban_ts=$(date -d "+${DEFAULT_BAN_DURATION} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -v "+${DEFAULT_BAN_DURATION}S" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "N/A")
+
+        db_lock
+        if [[ -f "$BLOCKED_PORTS_FILE" && -w "$BLOCKED_PORTS_FILE" ]]; then
+            local tmp; tmp=$(mktemp 2>/dev/null || echo "/tmp/fnm_block_$$")
+            grep -v "^icmp|${target_ip}|" "$BLOCKED_PORTS_FILE" > "$tmp" 2>/dev/null || true
+            mv "$tmp" "$BLOCKED_PORTS_FILE" 2>/dev/null || true
+            rm -f "$tmp" 2>/dev/null || true
+        fi
+        local db_dir; db_dir="$(dirname "$BLOCKED_PORTS_FILE")"
+        if [[ -w "$BLOCKED_PORTS_FILE" || ( -d "$db_dir" && -w "$db_dir" ) ]]; then
+            echo "icmp|$target_ip|icmp|$ts|$unban_ts|blocked" >> "$BLOCKED_PORTS_FILE" 2>/dev/null || true
+        fi
+        db_unlock
+
+        # Tích hợp XDP eBPF Map: Thêm rule drop ICMP
+        local xdp_mgr="/opt/fastnetmon_guard/compile_xdp.sh"
+        [[ ! -f "$xdp_mgr" && -f "$(dirname "${BASH_SOURCE[0]}")/compile_xdp.sh" ]] && xdp_mgr="$(dirname "${BASH_SOURCE[0]}")/compile_xdp.sh"
+        if [[ -f "$xdp_mgr" ]]; then
+            bash "$xdp_mgr" block "$target_ip" 0 icmp 2>/dev/null || true
+        fi
+
+        log "info" "Ghi DB: port=icmp IP=$target_ip blocked_at=$ts"
+        return 0
+    fi
+
     # Kiểm tra an toàn giá trị port
     if [[ ! "$port" =~ ^[0-9]+$ || "$port" -lt 1 || "$port" -gt 65535 ]]; then
         log "error" "Port không hợp lệ: $port. Bỏ qua block."
@@ -410,10 +452,10 @@ block_port() {
     unban_ts=$(date -d "+${DEFAULT_BAN_DURATION} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -v "+${DEFAULT_BAN_DURATION}S" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "N/A")
 
     db_lock
-    if [[ -f "$BLOCKED_PORTS_FILE" ]]; then
-        local tmp; tmp=$(mktemp)
+    if [[ -f "$BLOCKED_PORTS_FILE" && -w "$BLOCKED_PORTS_FILE" ]]; then
+        local tmp; tmp=$(mktemp 2>/dev/null || echo "/tmp/fnm_block_$$")
         grep -v "^${port}|${target_ip}|" "$BLOCKED_PORTS_FILE" > "$tmp" 2>/dev/null || true
-        mv "$tmp" "$BLOCKED_PORTS_FILE"
+        mv "$tmp" "$BLOCKED_PORTS_FILE" 2>/dev/null || true
         rm -f "$tmp" 2>/dev/null || true
     fi
     local db_dir; db_dir="$(dirname "$BLOCKED_PORTS_FILE")"
@@ -554,10 +596,15 @@ send_discord_ban() {
             ]')
     fi
 
+    local port_display="$port/$proto"
+    if [[ "$port" == "icmp" || "$proto" == "icmp" ]]; then
+        port_display="ICMP (Toàn bộ)"
+    fi
+
     local fields
     fields=$(jq -n \
         --arg ip "$ip" \
-        --arg port "$port/$proto" \
+        --arg port "$port_display" \
         --arg game "$game" \
         --arg stats "$stats" \
         --arg duration "${ban_min} phút (đến ${unban_ts})" \
@@ -645,21 +692,31 @@ handle_ban() {
     # Fallback: một số phiên bản FastNetMon đặt env var
     [[ -z "$blocked_port" ]] && blocked_port="${FASTNETMON_ATTACK_DETAILS_PORT:-}"
 
+    # Hỗ trợ nhận diện tấn công ICMP flood (không có destination port)
+    local proto_clean; proto_clean=$(echo "$protocol" | tr '[:upper:]' '[:lower:]')
+    if [[ -z "$blocked_port" ]]; then
+        if [[ "$proto_clean" == "icmp" ]] || grep -qiE "(icmp|ping flood)" "$dump_file" 2>/dev/null; then
+            blocked_port="icmp"
+            protocol="icmp"
+            log "info" "Phát hiện tấn công ICMP flood (không có port) -> Cách ly giao thức ICMP"
+        fi
+    fi
+
     if [[ -z "$blocked_port" ]]; then
         log "error" "Không xác định được destination port! Abort."
         send_discord_warn "$target_ip" "Không trích xuất được destination port từ dump.\nCần kiểm tra và xử lý thủ công!"
         return 0
     fi
 
-    # Kiểm tra tính hợp lệ của port
-    if [[ ! "$blocked_port" =~ ^[0-9]+$ || "$blocked_port" -lt 1 || "$blocked_port" -gt 65535 ]]; then
+    # Kiểm tra tính hợp lệ của port (chấp nhận "icmp" hoặc số port 1-65535)
+    if [[ "$blocked_port" != "icmp" && ( ! "$blocked_port" =~ ^[0-9]+$ || "$blocked_port" -lt 1 || "$blocked_port" -gt 65535 ) ]]; then
         log "error" "Giá trị port không hợp lệ ($blocked_port)! Abort."
         send_discord_warn "$target_ip" "Giá trị port trích xuất không hợp lệ: \`$blocked_port\`.\nCần kiểm tra thủ công!"
         return 0
     fi
 
     # Bảo vệ chống khóa ngoài (Anti-Lockout Protection): Tuyệt đối không ngắt port SSH/Web/Wings
-    if is_protected_port "$blocked_port"; then
+    if [[ "$blocked_port" != "icmp" ]] && is_protected_port "$blocked_port"; then
         log "warn" "CẢNH BÁO: Phát hiện tấn công vào port hệ thống cốt tử $blocked_port (SSH/Web/Panel). TỪ CHỐI DROP!"
         send_discord_warn "$target_ip" "🚨 **CẢNH BÁO NGUY HIỂM:** Phát hiện tấn công vào Cổng Cốt Tử \`$blocked_port\` (SSH/Web/Wings).\n🛡️ Hệ thống **TỪ CHỐI ngắt port** để tránh làm mất quyền điều khiển máy chủ!\n👉 Vui lòng liên hệ nhà mạng hoặc kích hoạt Anti-DDoS tầng Network."
         return 0
@@ -678,6 +735,9 @@ handle_ban() {
     server_id=$(echo "$server_info" | jq -r '.id // ""' 2>/dev/null)
     server_name=$(echo "$server_info" | jq -r '.name // "N/A"' 2>/dev/null)
     game_type=$(detect_game_from_server_info "$server_info")
+    if [[ "$blocked_port" == "icmp" && ( -z "$server_id" || "$server_id" == "null" ) ]]; then
+        game_type="🌐 Network (ICMP Flood)"
+    fi
 
     log "info" "Game: $game_type | Server: $server_name (ID: ${server_id:-N/A})"
 

@@ -36,6 +36,7 @@ install_deps() {
     info "Đang kiểm tra và cài đặt công cụ biên dịch eBPF / XDP..."
     if command -v apt-get &>/dev/null; then
         apt-get update -y
+        apt-get install -y clang llvm libbpf-dev linux-tools-common "linux-tools-$(uname -r 2>/dev/null || echo generic)" iproute2 gcc-multilib bpftool || \
         apt-get install -y clang llvm libbpf-dev linux-tools-common iproute2 gcc-multilib bpftool || true
     elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
         yum install -y clang llvm libbpf-devel bpftool iproute || true
@@ -54,15 +55,24 @@ build_xdp() {
         exit 1
     fi
 
+    # Tự động nhận diện kiến trúc CPU (x86_64 hoặc aarch64/ARM64)
+    local arch; arch=$(uname -m)
+    local target_arch="x86"
+    local arch_inc="/usr/include/x86_64-linux-gnu"
+    if [[ "$arch" == "aarch64" || "$arch" == "arm64" ]]; then
+        target_arch="arm64"
+        arch_inc="/usr/include/aarch64-linux-gnu"
+    fi
+
     # Biên dịch eBPF
     clang -O2 -g -Wall -target bpf \
-        -D__TARGET_ARCH_x86 \
+        "-D__TARGET_ARCH_${target_arch}" \
         -I/usr/include \
-        -I/usr/include/x86_64-linux-gnu \
+        "-I${arch_inc}" \
         -c "$BPF_SRC" -o "$BPF_OBJ"
 
     if [[ -f "$BPF_OBJ" ]]; then
-        pass "Biên dịch XDP thành công: $BPF_OBJ"
+        pass "Biên dịch XDP thành công ($target_arch): $BPF_OBJ"
     else
         err "Biên dịch thất bại!"
         exit 1
@@ -106,6 +116,11 @@ attach_xdp() {
         exit 1
     fi
 
+    # Đồng bộ vị trí Pinned BPF Map
+    if [[ ! -e "$PINNED_MAP" && -e "/sys/fs/bpf/xdp/globals/fnm_blocked_map" ]]; then
+        ln -sf "/sys/fs/bpf/xdp/globals/fnm_blocked_map" "$PINNED_MAP" 2>/dev/null || true
+    fi
+
     # Pin BPF Map nếu bpftool có sẵn
     if command -v bpftool &>/dev/null; then
         local map_id
@@ -122,6 +137,7 @@ detach_xdp() {
     check_root
     info "Đang gỡ XDP khỏi interface $iface..."
     ip link set dev "$iface" xdp off 2>/dev/null || true
+    ip link set dev "$iface" xdpdrv off 2>/dev/null || true
     ip link set dev "$iface" xdpgeneric off 2>/dev/null || true
     rm -f "$PINNED_MAP" 2>/dev/null || true
     pass "Đã gỡ XDP khỏi $iface thành công!"
@@ -164,9 +180,10 @@ port_to_hex_bytes() {
 proto_to_hex() {
     local proto; proto=$(echo "${1:-udp}" | tr '[:upper:]' '[:lower:]')
     case "$proto" in
-        tcp)  printf "06" ;;
-        icmp) printf "01" ;;
-        *)    printf "11" ;; # udp default
+        tcp)   printf "06" ;;
+        icmp)  printf "01" ;;
+        all|0) printf "00" ;;
+        *)     printf "11" ;; # udp default
     esac
 }
 
@@ -209,8 +226,8 @@ xdp_map_unblock() {
     ip_hex=$(ip_to_hex_bytes "$target_ip")
     port_hex=$(port_to_hex_bytes "$port")
 
-    # Xóa cả UDP và TCP key
-    for p in udp tcp icmp; do
+    # Xóa cả UDP, TCP, ICMP và rule toàn bộ protocol (all)
+    for p in udp tcp icmp all; do
         proto_hex=$(proto_to_hex "$p")
         local key_hex="$ip_hex $port_hex $proto_hex 00"
         bpftool map delete pinned "$PINNED_MAP" key hex $key_hex 2>/dev/null || true

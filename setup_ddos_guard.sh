@@ -79,16 +79,22 @@ info "Số CPU cores phát hiện: ${C_BOLD}${CPU_CORES}${C_RESET} (netflow_work
 
 # Lấy danh sách card mạng thực tế (bỏ qua lo, docker, veth, br, tailscale, vpn)
 DETECTED_IFACES=()
-for iface in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -vE '^(lo|docker[0-9]*|veth.*|br-.*|virbr.*|tailscale.*|tun[0-9]*|wg[0-9]*)' || true); do
-    DETECTED_IFACES+=("$iface")
+for iface in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d'@' -f1 | grep -vE '^(lo|docker[0-9]*|veth.*|br-.*|virbr.*|tailscale.*|tun[0-9]*|wg[0-9]*)' || true); do
+    [[ -n "$iface" ]] && DETECTED_IFACES+=("$iface")
 done
 
 DEFAULT_IFACE="${DETECTED_IFACES[0]:-eth0}"
 info "Card mạng đề xuất: ${C_BOLD}${DEFAULT_IFACE}${C_RESET}"
 prompt_read "Nhập tên card mạng theo dõi [Mặc định: $DEFAULT_IFACE]: " SELECTED_IFACE "$DEFAULT_IFACE"
 
-# Lấy Public IP
-DETECTED_IP=$(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null || ip route get 1.1.1.1 2>/dev/null | awk '{print $7}' | head -1 || echo "")
+# Lấy Public IP IPv4 (loại trừ ký tự thừa và IPv6)
+DETECTED_IP=$(curl -s -4 --connect-timeout 3 ifconfig.me 2>/dev/null | tr -d '[:space:]' || true)
+if [[ -z "$DETECTED_IP" || ! "$DETECTED_IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    DETECTED_IP=$(curl -s -4 --connect-timeout 3 icanhazip.com 2>/dev/null | tr -d '[:space:]' || true)
+fi
+if [[ -z "$DETECTED_IP" || ! "$DETECTED_IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    DETECTED_IP=$(ip route get 1.1.1.1 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}' | tr -d '[:space:]' || true)
+fi
 info "Public IP máy chủ phát hiện: ${C_BOLD}${DETECTED_IP:-Chưa xác định}${C_RESET}"
 prompt_read "Nhập Public IP của máy chủ [Mặc định: $DETECTED_IP]: " SERVER_PUBLIC_IP "$DETECTED_IP"
 

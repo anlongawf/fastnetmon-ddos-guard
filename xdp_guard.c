@@ -50,12 +50,27 @@ int xdp_ddos_guard_filter(struct xdp_md *ctx) {
     if ((void *)(eth + 1) > data_end)
         return XDP_PASS;
 
+    __u16 h_proto = eth->h_proto;
+    void *l3_hdr = (void *)(eth + 1);
+
+    // Hỗ trợ gói tin gắn nhãn VLAN 802.1Q (0x8100 hoặc 0x88A8)
+    if (h_proto == bpf_htons(ETH_P_8021Q) || h_proto == bpf_htons(0x88A8)) {
+        struct {
+            __be16 tci;
+            __be16 encap_proto;
+        } *vlan = l3_hdr;
+        if ((void *)(vlan + 1) > data_end)
+            return XDP_PASS;
+        h_proto = vlan->encap_proto;
+        l3_hdr = (void *)(vlan + 1);
+    }
+
     // Chỉ xử lý gói tin IPv4 (0x0800)
-    if (eth->h_proto != bpf_htons(ETH_P_IP))
+    if (h_proto != bpf_htons(ETH_P_IP))
         return XDP_PASS;
 
     // 2. Kiểm tra IPv4 Header
-    struct iphdr *ip = (void *)(eth + 1);
+    struct iphdr *ip = l3_hdr;
     if ((void *)(ip + 1) > data_end)
         return XDP_PASS;
 
@@ -127,6 +142,20 @@ int xdp_ddos_guard_filter(struct xdp_md *ctx) {
             __sync_fetch_and_add(&stats->dropped_bytes, (__u64)((long)data_end - (long)data));
             return XDP_DROP;
         }
+    }
+
+    // 6. Kiểm tra rule khóa toàn bộ IP (protocol = 0, dest_port = 0)
+    struct block_key ip_key = {
+        .dest_ip   = dest_ip,
+        .dest_port = 0,
+        .protocol  = 0,
+        .pad       = 0,
+    };
+    stats = bpf_map_lookup_elem(&fnm_blocked_map, &ip_key);
+    if (stats) {
+        __sync_fetch_and_add(&stats->dropped_packets, 1);
+        __sync_fetch_and_add(&stats->dropped_bytes, (__u64)((long)data_end - (long)data));
+        return XDP_DROP;
     }
 
     // Gói tin bình thường -> Cho phép đi tiếp vào Linux Network Stack
