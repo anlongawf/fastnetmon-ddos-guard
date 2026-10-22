@@ -72,21 +72,27 @@ int xdp_ddos_guard_filter(struct xdp_md *ctx) {
     void *trans_hdr = (void *)ip + ip_hdr_len;
 
     // 3. Trích xuất Destination Port theo giao thức
-    if (protocol == IPPROTO_UDP) {
-        struct udphdr *udp = trans_hdr;
-        if ((void *)(udp + 1) > data_end)
+    __u16 frag_offset = bpf_ntohs(ip->frag_off) & 0x1FFF;
+    if (frag_offset == 0) {
+        if (protocol == IPPROTO_UDP) {
+            struct udphdr *udp = trans_hdr;
+            if ((void *)(udp + 1) > data_end)
+                return XDP_PASS;
+            dest_port = bpf_ntohs(udp->dest);
+        } else if (protocol == IPPROTO_TCP) {
+            struct tcphdr *tcp = trans_hdr;
+            if ((void *)(tcp + 1) > data_end)
+                return XDP_PASS;
+            dest_port = bpf_ntohs(tcp->dest);
+        } else if (protocol == IPPROTO_ICMP) {
+            // ICMP không có port -> dùng dest_port = 0
+            dest_port = 0;
+        } else {
             return XDP_PASS;
-        dest_port = bpf_ntohs(udp->dest);
-    } else if (protocol == IPPROTO_TCP) {
-        struct tcphdr *tcp = trans_hdr;
-        if ((void *)(tcp + 1) > data_end)
-            return XDP_PASS;
-        dest_port = bpf_ntohs(tcp->dest);
-    } else if (protocol == IPPROTO_ICMP) {
-        // ICMP không có port -> dùng dest_port = 0
-        dest_port = 0;
+        }
     } else {
-        return XDP_PASS;
+        // Gói tin phân mảnh tiếp theo (non-first fragment) không có UDP/TCP port
+        dest_port = 0;
     }
 
     // 4. Tra cứu trong BPF Map xem có trong danh sách bị khóa không

@@ -108,13 +108,16 @@ read_stdin_dump() {
         cache_file="/tmp/dump_${target_ip}_$(date +%s).txt"
     fi
 
-    if command -v timeout &>/dev/null; then
-        if timeout 5 cat > "$cache_file" 2>/dev/null && [[ -s "$cache_file" ]]; then
-            echo "$cache_file"; return 0
-        fi
-    else
-        if cat > "$cache_file" 2>/dev/null && [[ -s "$cache_file" ]]; then
-            echo "$cache_file"; return 0
+    # Chỉ đọc stdin nếu có dữ liệu được pipe vào (không phải terminal tương tác)
+    if [[ ! -t 0 ]]; then
+        if command -v timeout &>/dev/null; then
+            if timeout 3 cat > "$cache_file" 2>/dev/null && [[ -s "$cache_file" ]]; then
+                echo "$cache_file"; return 0
+            fi
+        else
+            if cat > "$cache_file" 2>/dev/null && [[ -s "$cache_file" ]]; then
+                echo "$cache_file"; return 0
+            fi
         fi
     fi
 
@@ -344,6 +347,7 @@ ptero_do_action() {
 
 is_protected_port() {
     local check_port="$1"
+    [[ ! "$check_port" =~ ^[0-9]+$ ]] && return 1
     for p in "${PROTECTED_PORTS[@]}"; do
         if [[ "$check_port" -eq "$p" ]] 2>/dev/null; then
             return 0
@@ -353,13 +357,23 @@ is_protected_port() {
 }
 
 db_lock() {
+    local lock_dir; lock_dir="$(dirname "$BLOCKED_PORTS_FILE")"
+    if [[ ! -d "$lock_dir" || ! -w "$lock_dir" ]]; then
+        return 0
+    fi
+    if ! command -v flock &>/dev/null; then
+        return 0
+    fi
     local lockfile="${BLOCKED_PORTS_FILE}.lock"
-    exec 200>"$lockfile"
+    exec 200>"$lockfile" 2>/dev/null || return 0
     flock -x -w 5 200 2>/dev/null || log "warn" "Không lấy được DB lock, tiếp tục xử lý..."
 }
 
 db_unlock() {
-    flock -u 200 2>/dev/null || true
+    if command -v flock &>/dev/null; then
+        flock -u 200 2>/dev/null || true
+    fi
+    exec 200>&- 2>/dev/null || true
 }
 
 block_port() {
@@ -402,7 +416,10 @@ block_port() {
         mv "$tmp" "$BLOCKED_PORTS_FILE"
         rm -f "$tmp" 2>/dev/null || true
     fi
-    echo "$port|$target_ip|$proto|$ts|$unban_ts|blocked" >> "$BLOCKED_PORTS_FILE"
+    local db_dir; db_dir="$(dirname "$BLOCKED_PORTS_FILE")"
+    if [[ -w "$BLOCKED_PORTS_FILE" || ( -d "$db_dir" && -w "$db_dir" ) ]]; then
+        echo "$port|$target_ip|$proto|$ts|$unban_ts|blocked" >> "$BLOCKED_PORTS_FILE" 2>/dev/null || true
+    fi
     db_unlock
 
     # Tích hợp XDP eBPF Map: Thêm rule drop siêu tốc nếu XDP engine được kích hoạt
@@ -452,10 +469,10 @@ unblock_port() {
     fi
 
     db_lock
-    if [[ -f "$BLOCKED_PORTS_FILE" ]]; then
-        local tmp; tmp=$(mktemp)
+    if [[ -f "$BLOCKED_PORTS_FILE" && -w "$BLOCKED_PORTS_FILE" ]]; then
+        local tmp; tmp=$(mktemp 2>/dev/null || echo "/tmp/fnm_unblock_$$")
         grep -v "^${port}|${target_ip}|" "$BLOCKED_PORTS_FILE" > "$tmp" 2>/dev/null || true
-        mv "$tmp" "$BLOCKED_PORTS_FILE"
+        mv "$tmp" "$BLOCKED_PORTS_FILE" 2>/dev/null || true
         rm -f "$tmp" 2>/dev/null || true
     fi
     db_unlock
@@ -784,7 +801,8 @@ main() {
 
     log "info" "Script called: IP=$target_ip DIR=$direction EVENT=$event_type PROTO=$protocol"
 
-    case "$event_type" in
+    local event_clean; event_clean=$(echo "$event_type" | tr '[:upper:]' '[:lower:]')
+    case "$event_clean" in
         ban)   handle_ban   "$target_ip" "$direction" "$protocol" ;;
         unban) handle_unban "$target_ip" ;;
         *)     log "warn" "Event không xác định: $event_type"; exit 0 ;;

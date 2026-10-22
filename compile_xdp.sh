@@ -109,7 +109,7 @@ attach_xdp() {
     # Pin BPF Map nếu bpftool có sẵn
     if command -v bpftool &>/dev/null; then
         local map_id
-        map_id=$(bpftool map list 2>/dev/null | grep "fnm_blocked_map" | awk '{print $1}' | tr -d ':' || echo "")
+        map_id=$(bpftool map list 2>/dev/null | grep "fnm_blocked_map" | awk '{print $1}' | tr -d ':' || true)
         if [[ -n "$map_id" && ! -e "$PINNED_MAP" ]]; then
             bpftool map pin id "$map_id" "$PINNED_MAP" 2>/dev/null || true
             pass "Đã pin BPF map tại $PINNED_MAP"
@@ -171,7 +171,8 @@ proto_to_hex() {
 }
 
 xdp_map_block() {
-    local target_ip="$1" port="${2:-0}" proto="${3:-udp}"
+    local target_ip="${1:-}" port="${2:-0}" proto="${3:-udp}"
+    [[ -z "$target_ip" ]] && return 0
     [[ ! -e "$PINNED_MAP" ]] && return 0
     ! command -v bpftool &>/dev/null && return 0
 
@@ -199,7 +200,8 @@ xdp_map_block() {
 }
 
 xdp_map_unblock() {
-    local target_ip="$1" port="${2:-0}" proto="${3:-udp}"
+    local target_ip="${1:-}" port="${2:-0}" proto="${3:-udp}"
+    [[ -z "$target_ip" ]] && return 0
     [[ ! -e "$PINNED_MAP" ]] && return 0
     ! command -v bpftool &>/dev/null && return 0
 
