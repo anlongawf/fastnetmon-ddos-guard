@@ -398,6 +398,17 @@ fi
 
 # Khởi động lại FastNetMon
 if command -v systemctl &>/dev/null; then
+    # Cấu hình systemd Type=simple override để tránh lỗi timeout do PID file
+    mkdir -p /etc/systemd/system/fastnetmon.service.d 2>/dev/null || true
+    cat > /etc/systemd/system/fastnetmon.service.d/override.conf << 'OVERRIDE'
+[Service]
+Type=simple
+ExecStart=
+ExecStart=/usr/sbin/fastnetmon
+Restart=always
+RestartSec=3s
+OVERRIDE
+    systemctl daemon-reload 2>/dev/null || true
     info "Đang restart dịch vụ FastNetMon..."
     systemctl restart fastnetmon 2>/dev/null || true
     sleep 2
