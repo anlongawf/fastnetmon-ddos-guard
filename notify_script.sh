@@ -396,29 +396,38 @@ block_port() {
 unblock_port() {
     local port="$1" target_ip="$2"
 
-    if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+    if [[ "$port" == "icmp" ]]; then
+        log "info" "Mở lại giao thức ICMP (IP: $target_ip)"
+        while "$IPT_CMD" -t "$IPTABLES_TABLE" -C "$IPTABLES_CHAIN" \
+                -p icmp -d "$target_ip" -j DROP 2>/dev/null; do
+            "$IPT_CMD" -t "$IPTABLES_TABLE" -D "$IPTABLES_CHAIN" \
+                -p icmp -d "$target_ip" -j DROP 2>/dev/null || break
+            log "info" "Xóa DROP rule ICMP: -d $target_ip"
+        done
+    elif [[ "$port" =~ ^[0-9]+$ ]]; then
+        log "info" "Mở port $port (IP: $target_ip)"
+        for p in udp tcp; do
+            local max_retries=5
+            while "$IPT_CMD" -t "$IPTABLES_TABLE" -C "$IPTABLES_CHAIN" \
+                    -p "$p" --dport "$port" -d "$target_ip" -j DROP 2>/dev/null; do
+                "$IPT_CMD" -t "$IPTABLES_TABLE" -D "$IPTABLES_CHAIN" \
+                    -p "$p" --dport "$port" -d "$target_ip" -j DROP 2>/dev/null || break
+                log "info" "Xóa DROP rule: -p $p --dport $port -d $target_ip"
+                ((max_retries--)) || break
+                [[ $max_retries -le 0 ]] && break
+            done
+        done
+    else
         log "error" "Port unblock không hợp lệ: $port"
         return 1
     fi
-
-    log "info" "Mở port $port (IP: $target_ip)"
-    for p in udp tcp; do
-        local max_retries=5
-        while "$IPT_CMD" -t "$IPTABLES_TABLE" -C "$IPTABLES_CHAIN" \
-                -p "$p" --dport "$port" -d "$target_ip" -j DROP 2>/dev/null; do
-            "$IPT_CMD" -t "$IPTABLES_TABLE" -D "$IPTABLES_CHAIN" \
-                -p "$p" --dport "$port" -d "$target_ip" -j DROP 2>/dev/null || break
-            log "info" "Xóa DROP rule: -p $p --dport $port -d $target_ip"
-            ((max_retries--)) || break
-            [[ $max_retries -le 0 ]] && break
-        done
-    done
 
     db_lock
     if [[ -f "$BLOCKED_PORTS_FILE" ]]; then
         local tmp; tmp=$(mktemp)
         grep -v "^${port}|${target_ip}|" "$BLOCKED_PORTS_FILE" > "$tmp" 2>/dev/null || true
         mv "$tmp" "$BLOCKED_PORTS_FILE"
+        rm -f "$tmp" 2>/dev/null || true
     fi
     db_unlock
 }
@@ -646,24 +655,56 @@ handle_unban() {
 
     log "info" "=== UNBAN EVENT: IP=$target_ip ==="
 
-    [[ ! -f "$BLOCKED_PORTS_FILE" ]] && {
-        log "warn" "Không tìm thấy DB file: $BLOCKED_PORTS_FILE"
-        return
-    }
+    local all_ports_to_unblock=()
 
-    local ports_to_unblock
-    ports_to_unblock=$(grep "^[^|]*|${target_ip}|" "$BLOCKED_PORTS_FILE" \
-        | cut -d'|' -f1 | sort -u)
+    # 1. Thu thập port từ file Database (nếu file tồn tại)
+    if [[ -f "$BLOCKED_PORTS_FILE" ]]; then
+        while IFS= read -r p; do
+            [[ -n "$p" ]] && all_ports_to_unblock+=("$p")
+        done < <(grep "^[^|]*|${target_ip}|" "$BLOCKED_PORTS_FILE" 2>/dev/null | cut -d'|' -f1 | sort -u)
+    fi
 
-    if [[ -z "$ports_to_unblock" ]]; then
-        log "warn" "Không có port nào cần unban cho IP $target_ip"
+    # 2. Kernel Fallback: Quét trực tiếp bảng iptables để tìm các rule DROP đang gán cho IP này
+    # Đảm bảo KHÔNG BAO GIỜ bị kẹt rule kể cả khi file DB bị xóa, mất hoặc server vừa reboot
+    if "$IPT_CMD" -t "$IPTABLES_TABLE" -L "$IPTABLES_CHAIN" -n &>/dev/null; then
+        while IFS= read -r ipt_port; do
+            if [[ -n "$ipt_port" ]]; then
+                local exists=false
+                for existing in "${all_ports_to_unblock[@]:-}"; do
+                    [[ "$existing" == "$ipt_port" ]] && { exists=true; break; }
+                done
+                if [[ "$exists" == "false" ]]; then
+                    all_ports_to_unblock+=("$ipt_port")
+                    log "info" "Kernel Fallback: Phát hiện rule sót trong iptables cho port $ipt_port (IP: $target_ip)"
+                fi
+            fi
+        done < <("$IPT_CMD" -t "$IPTABLES_TABLE" -S "$IPTABLES_CHAIN" 2>/dev/null \
+            | grep -E "\-d[[:space:]]+${target_ip}(/32)?" \
+            | grep -oE "\-\-dport[[:space:]]+[0-9]+" \
+            | awk '{print $2}' | sort -u)
+
+        # Kiểm tra xem có rule ICMP DROP nào của IP này không
+        if "$IPT_CMD" -t "$IPTABLES_TABLE" -S "$IPTABLES_CHAIN" 2>/dev/null \
+                | grep -qE "\-p[[:space:]]+icmp[[:space:]]+.*\-d[[:space:]]+${target_ip}"; then
+            all_ports_to_unblock+=("icmp")
+        fi
+
+        # Dọn sạch rule drop cả IP (nếu có tồn tại)
+        while "$IPT_CMD" -t "$IPTABLES_TABLE" -C "$IPTABLES_CHAIN" -d "$target_ip" -j DROP 2>/dev/null; do
+            "$IPT_CMD" -t "$IPTABLES_TABLE" -D "$IPTABLES_CHAIN" -d "$target_ip" -j DROP 2>/dev/null || break
+            log "info" "Xóa rule DROP IP toàn bộ: -d $target_ip"
+        done
+    fi
+
+    if [[ ${#all_ports_to_unblock[@]} -eq 0 ]]; then
+        log "warn" "Không có port hoặc rule nào cần unban cho IP $target_ip"
         return
     fi
 
-    while IFS= read -r port; do
+    for port in "${all_ports_to_unblock[@]}"; do
         [[ -z "$port" ]] && continue
 
-        # Tìm lại thông tin server để unsuspend và notify
+        # Tìm lại thông tin server để unsuspend và notify (nếu bật Pterodactyl)
         local server_info server_id server_name game_type
         server_info=$(find_ptero_server_info_by_port "$port")
         server_id=$(echo "$server_info" | jq -r '.id // ""' 2>/dev/null)
@@ -672,15 +713,15 @@ handle_unban() {
 
         unblock_port "$port" "$target_ip"
 
-        # Unsuspend Pterodactyl server
-        if [[ -n "$server_id" && "$server_id" != "null" ]]; then
+        # Unsuspend Pterodactyl server (nếu bật)
+        if [[ -n "$server_id" && "$server_id" != "null" && "$PTERO_ENABLED" == "true" ]]; then
             ptero_do_action "$server_id" "unsuspend"
         fi
 
         send_discord_unban "$target_ip" "$port" "$game_type" "$server_name" "${server_id:-N/A}"
 
-        log "info" "=== UNBAN HOÀN TẤT: port $port ==="
-    done <<< "$ports_to_unblock"
+        log "info" "=== UNBAN HOÀN TẤT: port $port (IP: $target_ip) ==="
+    done
 
     # Xóa cache Pterodactyl để force refresh lần sau
     rm -f "$_PTERO_CACHE_FILE" 2>/dev/null || true
