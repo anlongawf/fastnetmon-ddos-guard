@@ -241,11 +241,28 @@ TARGET_SCRIPT="$TARGET_DIR/notify_script.sh"
 
 info "Đang tạo các thư mục cần thiết..."
 mkdir -p "$TARGET_DIR"
+mkdir -p /etc/fastnetmon_guard
 mkdir -p /var/log/fastnetmon_guard
 mkdir -p /var/lib/fastnetmon_guard
 mkdir -p /tmp/fastnetmon_dump_cache
 
-# Copy và cấu hình notify_script.sh
+# Tạo file cấu hình độc lập /etc/fastnetmon_guard/guard.conf
+info "Đang tạo file cấu hình /etc/fastnetmon_guard/guard.conf..."
+cat > /etc/fastnetmon_guard/guard.conf << CONF
+# =============================================================================
+# FastNetMon DDoS Guard - System Configuration
+# =============================================================================
+DISCORD_WEBHOOK_URL="$DISCORD_URL"
+PTERO_ENABLED=$PTERO_ENABLED
+PTERO_PANEL_URL="$PTERO_URL"
+PTERO_API_KEY="$PTERO_KEY"
+PTERO_ACTION="$PTERO_ACT"
+DEFAULT_BAN_DURATION="$CONFIG_BAN_TIME"
+CONF
+chmod 600 /etc/fastnetmon_guard/guard.conf
+pass "Đã lưu cấu hình an toàn tại /etc/fastnetmon_guard/guard.conf"
+
+# Copy và cấp quyền cho notify_script.sh
 info "Đang triển khai notify_script.sh vào $TARGET_SCRIPT..."
 if [[ -f "$SCRIPT_DIR/notify_script.sh" ]]; then
     cp "$SCRIPT_DIR/notify_script.sh" "$TARGET_SCRIPT"
@@ -253,14 +270,6 @@ else
     err "Không tìm thấy notify_script.sh tại $SCRIPT_DIR!"
     exit 1
 fi
-
-# Thay thế các cấu hình trong notify_script.sh
-sed -i "s|DISCORD_WEBHOOK_URL=.*|DISCORD_WEBHOOK_URL=\"$DISCORD_URL\"|g" "$TARGET_SCRIPT"
-sed -i "s|PTERO_ENABLED=.*|PTERO_ENABLED=$PTERO_ENABLED|g" "$TARGET_SCRIPT"
-sed -i "s|PTERO_PANEL_URL=.*|PTERO_PANEL_URL=\"$PTERO_URL\"|g" "$TARGET_SCRIPT"
-sed -i "s|PTERO_API_KEY=.*|PTERO_API_KEY=\"$PTERO_KEY\"|g" "$TARGET_SCRIPT"
-sed -i "s|PTERO_ACTION=.*|PTERO_ACTION=\"$PTERO_ACT\"|g" "$TARGET_SCRIPT"
-sed -i "s|DEFAULT_BAN_DURATION=.*|DEFAULT_BAN_DURATION=\"$CONFIG_BAN_TIME\"|g" "$TARGET_SCRIPT"
 
 chmod +x "$TARGET_SCRIPT"
 pass "Đã cài đặt notify_script.sh thành công!"

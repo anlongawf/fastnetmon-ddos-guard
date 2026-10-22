@@ -49,7 +49,7 @@ header() { echo -e "\n${CYAN}═════════════════
 # Kiểm tra quyền root (chỉ bắt buộc khi chạy test liên quan đến iptables)
 check_root() {
     local test_id="${1:-all}"
-    if [[ "$test_id" =~ ^(2|7|8)$ ]]; then
+    if [[ "$test_id" =~ ^(2|7|8|10)$ ]]; then
         return 0
     fi
     if [[ $EUID -ne 0 ]]; then
@@ -602,6 +602,38 @@ test_9_iptables_stress() {
 }
 
 # =============================================================================
+# TEST 10: Kiểm tra Chống Khóa Ngoài (Anti-Lockout Protection)
+# =============================================================================
+test_10_anti_lockout() {
+    header "10" "Kiểm tra Chống Khóa Ngoài (Anti-Lockout System Ports)"
+
+    # Nạp hàm is_protected_port từ notify_script
+    if [[ -f "$NOTIFY_SCRIPT" ]]; then
+        # Trích xuất và chạy kiểm tra
+        local protected_ports=(22 80 443 8080 2022 53 3306)
+        local game_ports=(25565 30120 7777 27015)
+
+        for p in "${protected_ports[@]}"; do
+            if grep -q "PROTECTED_PORTS=.*$p" "$NOTIFY_SCRIPT"; then
+                pass "Cổng cốt tử $p được bảo vệ trong PROTECTED_PORTS"
+            else
+                fail "Cổng cốt tử $p CHƯA được bảo vệ!"
+            fi
+        done
+
+        for gp in "${game_ports[@]}"; do
+            if grep -q "PROTECTED_PORTS=.*$gp" "$NOTIFY_SCRIPT"; then
+                fail "Cổng game $gp bị nhầm lẫn thành protected port!"
+            else
+                pass "Cổng game $gp được phép cách ly khi bị tấn công"
+            fi
+        done
+    else
+        fail "Không tìm thấy notify_script: $NOTIFY_SCRIPT"
+    fi
+}
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 print_summary() {
@@ -653,6 +685,7 @@ main() {
         7) test_7_discord_and_ptero ;;
         8) test_8_fastnetmon_config ;;
         9) test_9_iptables_stress ;;
+        10) test_10_anti_lockout ;;
         all|*)
             test_1_prerequisites
             test_2_port_extraction
@@ -663,6 +696,7 @@ main() {
             test_7_discord_and_ptero
             test_8_fastnetmon_config
             test_9_iptables_stress
+            test_10_anti_lockout
             ;;
     esac
 

@@ -44,6 +44,17 @@ IPT_CMD="${IPT_CMD:-/sbin/iptables}"
 # --- Thời gian ban mặc định (giây) ---
 DEFAULT_BAN_DURATION="${DEFAULT_BAN_DURATION:-900}"   # 15 phút
 
+# --- File cấu hình bên ngoài (nếu có, sẽ ghi đè các cấu hình bên dưới) ---
+GUARD_CONF="${GUARD_CONF:-/etc/fastnetmon_guard/guard.conf}"
+if [[ -f "$GUARD_CONF" ]]; then
+    # shellcheck source=/dev/null
+    source "$GUARD_CONF"
+fi
+
+# --- Danh sách Port hệ thống cốt tử - KHÔNG BAO GIỜ ĐƯỢC CHẶN (Chống khóa ngoài Self-Lockout) ---
+# 22 (SSH), 80/443 (Web/SSL), 8080 (Wings API), 2022 (Wings SFTP), 53 (DNS), 3306 (MySQL)
+PROTECTED_PORTS=(22 80 443 8080 2022 53 3306 5432 6379 27017)
+
 # --- Discord embed colors (decimal) ---
 COLOR_BAN=15158332     # Đỏ  #E74C3C
 COLOR_UNBAN=3066993    # Xanh lá #2ECC71
@@ -317,8 +328,40 @@ ptero_do_action() {
 # SECTION 6: CHẶN / MỞ PORT BẰNG IPTABLES RAW
 # =============================================================================
 
+is_protected_port() {
+    local check_port="$1"
+    for p in "${PROTECTED_PORTS[@]}"; do
+        if [[ "$check_port" -eq "$p" ]] 2>/dev/null; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+db_lock() {
+    local lockfile="${BLOCKED_PORTS_FILE}.lock"
+    exec 200>"$lockfile"
+    flock -x -w 5 200 2>/dev/null || log "warn" "Không lấy được DB lock, tiếp tục xử lý..."
+}
+
+db_unlock() {
+    flock -u 200 2>/dev/null || true
+}
+
 block_port() {
     local port="$1" proto="${2:-udp}" target_ip="$3"
+
+    # Kiểm tra an toàn giá trị port
+    if [[ ! "$port" =~ ^[0-9]+$ || "$port" -lt 1 || "$port" -gt 65535 ]]; then
+        log "error" "Port không hợp lệ: $port. Bỏ qua block."
+        return 1
+    fi
+
+    # Không bao giờ chặn cổng hệ thống
+    if is_protected_port "$port"; then
+        log "warn" "Bảo vệ cổng hệ thống: $port nằm trong PROTECTED_PORTS. Bỏ qua block!"
+        return 0
+    fi
 
     log "info" "Chặn port $port/$proto (IP: $target_ip)"
     init_iptables_chain
@@ -337,17 +380,26 @@ block_port() {
     local ts; ts=$(date '+%Y-%m-%d %H:%M:%S')
     local unban_ts
     unban_ts=$(date -d "+${DEFAULT_BAN_DURATION} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "N/A")
+
+    db_lock
     if [[ -f "$BLOCKED_PORTS_FILE" ]]; then
         local tmp; tmp=$(mktemp)
         grep -v "^${port}|${target_ip}|" "$BLOCKED_PORTS_FILE" > "$tmp" 2>/dev/null || true
         mv "$tmp" "$BLOCKED_PORTS_FILE"
     fi
     echo "$port|$target_ip|$proto|$ts|$unban_ts|blocked" >> "$BLOCKED_PORTS_FILE"
+    db_unlock
+
     log "info" "Ghi DB: port=$port IP=$target_ip blocked_at=$ts"
 }
 
 unblock_port() {
     local port="$1" target_ip="$2"
+
+    if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+        log "error" "Port unblock không hợp lệ: $port"
+        return 1
+    fi
 
     log "info" "Mở port $port (IP: $target_ip)"
     for p in udp tcp; do
@@ -362,11 +414,13 @@ unblock_port() {
         done
     done
 
+    db_lock
     if [[ -f "$BLOCKED_PORTS_FILE" ]]; then
         local tmp; tmp=$(mktemp)
         grep -v "^${port}|${target_ip}|" "$BLOCKED_PORTS_FILE" > "$tmp" 2>/dev/null || true
         mv "$tmp" "$BLOCKED_PORTS_FILE"
     fi
+    db_unlock
 }
 
 # =============================================================================
@@ -540,6 +594,20 @@ handle_ban() {
         log "error" "Không xác định được destination port! Abort."
         send_discord_warn "$target_ip" "Không trích xuất được destination port từ dump.\nCần kiểm tra và xử lý thủ công!"
         return 1
+    fi
+
+    # Kiểm tra tính hợp lệ của port
+    if [[ ! "$blocked_port" =~ ^[0-9]+$ || "$blocked_port" -lt 1 || "$blocked_port" -gt 65535 ]]; then
+        log "error" "Giá trị port không hợp lệ ($blocked_port)! Abort."
+        send_discord_warn "$target_ip" "Giá trị port trích xuất không hợp lệ: \`$blocked_port\`.\nCần kiểm tra thủ công!"
+        return 1
+    fi
+
+    # Bảo vệ chống khóa ngoài (Anti-Lockout Protection): Tuyệt đối không ngắt port SSH/Web/Wings
+    if is_protected_port "$blocked_port"; then
+        log "warn" "CẢNH BÁO: Phát hiện tấn công vào port hệ thống cốt tử $blocked_port (SSH/Web/Panel). TỪ CHỐI DROP!"
+        send_discord_warn "$target_ip" "🚨 **CẢNH BÁO NGUY HIỂM:** Phát hiện tấn công vào Cổng Cốt Tử \`$blocked_port\` (SSH/Web/Wings).\n🛡️ Hệ thống **TỪ CHỐI ngắt port** để tránh làm mất quyền điều khiển máy chủ!\n👉 Vui lòng liên hệ nhà mạng hoặc kích hoạt Anti-DDoS tầng Network."
+        return 0
     fi
 
     # Lấy thống kê traffic
