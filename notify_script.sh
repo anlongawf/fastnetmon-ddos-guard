@@ -386,9 +386,17 @@ block_port() {
         local tmp; tmp=$(mktemp)
         grep -v "^${port}|${target_ip}|" "$BLOCKED_PORTS_FILE" > "$tmp" 2>/dev/null || true
         mv "$tmp" "$BLOCKED_PORTS_FILE"
+        rm -f "$tmp" 2>/dev/null || true
     fi
     echo "$port|$target_ip|$proto|$ts|$unban_ts|blocked" >> "$BLOCKED_PORTS_FILE"
     db_unlock
+
+    # Tích hợp XDP eBPF Map: Thêm rule drop siêu tốc nếu XDP engine được kích hoạt
+    local xdp_mgr="/opt/fastnetmon_guard/compile_xdp.sh"
+    [[ ! -f "$xdp_mgr" && -f "$(dirname "${BASH_SOURCE[0]}")/compile_xdp.sh" ]] && xdp_mgr="$(dirname "${BASH_SOURCE[0]}")/compile_xdp.sh"
+    if [[ -f "$xdp_mgr" ]]; then
+        bash "$xdp_mgr" block "$target_ip" "$port" "$proto" 2>/dev/null || true
+    fi
 
     log "info" "Ghi DB: port=$port IP=$target_ip blocked_at=$ts"
 }
@@ -420,6 +428,13 @@ unblock_port() {
     else
         log "error" "Port unblock không hợp lệ: $port"
         return 1
+    fi
+
+    # Tích hợp XDP eBPF Map: Gỡ bỏ rule drop trong XDP Map
+    local xdp_mgr="/opt/fastnetmon_guard/compile_xdp.sh"
+    [[ ! -f "$xdp_mgr" && -f "$(dirname "${BASH_SOURCE[0]}")/compile_xdp.sh" ]] && xdp_mgr="$(dirname "${BASH_SOURCE[0]}")/compile_xdp.sh"
+    if [[ -f "$xdp_mgr" ]]; then
+        bash "$xdp_mgr" unblock "$target_ip" "$port" 2>/dev/null || true
     fi
 
     db_lock

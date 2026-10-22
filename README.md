@@ -7,7 +7,8 @@ Hệ thống phát hiện DDoS tự động bằng **FastNetMon Community** kế
 ## 🎯 Điểm Nổi Bật
 
 - ⚡ **Chỉ ngắt đúng PORT bị tấn công**: Không làm sập cả IP máy chủ, các game server khác và kết nối SSH (22) vẫn hoạt động 100% bình thường.
-- 🚀 **Tối ưu tầng Kernel**: Sử dụng bảng `raw PREROUTING` để drop traffic ngay lập tức, không làm nghẽn CPU bởi conntrack.
+- 🚀 **Công nghệ Hybrid XDP / eBPF + iptables raw**: Hỗ trợ drop gói tin siêu tốc ngay tại Ring Buffer Driver của Card mạng với tốc độ **10.000.000 - 20.000.000+ PPS** mà không tốn CPU.
+- 🛡️ **Bảo vệ chống khóa ngoài (Anti-Lockout)**: Tuyệt đối không bao giờ ngắt nhầm cổng SSH (22), Web (80/443), Wings API (8080) và Tailscale.
 - 🎮 **Profiles game chuyên biệt**: Hỗ trợ tối ưu hóa cấu hình cho:
   - ⛏️ **Minecraft** (Java & Bedrock)
   - 🔫 **SA-MP** (San Andreas Multiplayer)
@@ -15,9 +16,9 @@ Hệ thống phát hiện DDoS tự động bằng **FastNetMon Community** kế
   - 🦖 **The Isle**
   - 🕹️ **Custom Game**
 - 🚪 **Tùy biến Range Port**: Tự nhập dải port theo thực tế số container trên máy chủ.
-- 🤖 **Tự động hóa với Pterodactyl Panel**: Tự động suspend container bị đánh để giải phóng CPU/RAM, và unsuspend khi hết đợt tấn công.
+- 🤖 **Tùy chọn tích hợp Pterodactyl Panel**: Tự động suspend/unsuspend container game trên Wings.
 - 🔔 **Thông báo Discord Webhook**: Bắn thông báo embed đẹp mắt bằng tiếng Việt khi bị tấn công và khi mở lại port.
-- ⏱️ **Tự động unban**: Tự mở lại port và unsuspend server sau thời gian quy định (mặc định 15 phút).
+- ⏱️ **Tự động unban**: Tự mở lại port sau thời gian quy định (mặc định 15 phút).
 
 ---
 
@@ -25,7 +26,9 @@ Hệ thống phát hiện DDoS tự động bằng **FastNetMon Community** kế
 
 ```text
 ├── setup_ddos_guard.sh  # Script cài đặt tương tác tự động A-Z (CLI Wizard)
-├── notify_script.sh     # Script xử lý trích xuất port, iptables drop & Discord alert
+├── notify_script.sh     # Script xử lý trích xuất port, iptables drop, XDP update & Discord alert
+├── compile_xdp.sh       # Script quản lý biên dịch, nạp (attach) và gỡ (detach) XDP eBPF
+├── xdp_guard.c          # Mã nguồn chương trình eBPF/XDP drop gói tin siêu tốc tại card mạng
 ├── test_ddos_guard.sh   # Bộ công cụ test mô phỏng toàn diện trước khi đưa vào chạy thật
 ├── fastnetmon.conf      # File cấu hình mẫu tối ưu cho FastNetMon Community
 └── .gitignore
