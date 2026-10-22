@@ -320,6 +320,7 @@ pass "Đã cấu hình /etc/fastnetmon_whitelist (Bảo vệ luồng Tailscale g
 
 # Ghi file cấu hình FastNetMon (/etc/fastnetmon.conf)
 info "Đang tạo file cấu hình /etc/fastnetmon.conf..."
+OPTIMAL_WORKERS=$(( CPU_CORES > 4 ? 4 : CPU_CORES ))
 cat > /etc/fastnetmon.conf << EOF
 ###############################################################################
 # FastNetMon Community Configuration
@@ -334,7 +335,7 @@ interfaces = $SELECTED_IFACE
 mirror_afpacket = on
 process_incoming_traffic = on
 process_outgoing_traffic = on
-netflow_workers = $CPU_CORES
+netflow_workers = $OPTIMAL_WORKERS
 afpacket_ring_buffer_size = 67108864
 
 # 3. Ngưỡng phát hiện tấn công DDoS
@@ -342,12 +343,16 @@ threshold_pps = $CONFIG_PPS
 threshold_mbps = $CONFIG_MBPS
 threshold_flows = $CONFIG_FLOWS
 
+enable_ban = on
 ban_for_pps = on
 ban_for_bandwidth = on
 ban_for_flows = on
+check_period = 1
+enable_connection_tracking = on
 
 # 4. Thời gian ban tự động unban (giây)
 ban_time = $CONFIG_BAN_TIME
+unban_only_if_attack_finished = off
 
 # 5. Gọi script ngắt port tự động
 notify_script_enabled = on
@@ -355,10 +360,17 @@ notify_script_path = $TARGET_SCRIPT
 notify_script_pass_details = on
 
 # 6. Danh sách subnet/IP theo dõi
+networks_list_path = /etc/fastnetmon_networks_list
 networks_list = /etc/fastnetmon_networks_list
+white_list_path = /etc/fastnetmon_whitelist
 white_list = /etc/fastnetmon_whitelist
 
-# 7. Cấu hình log
+# 7. PID File và Thống kê Client (Bắt buộc cho systemd và fastnetmon_client)
+pid_path = /var/run/fastnetmon.pid
+cli_stats_file_path = /tmp/fastnetmon.dat
+cli_stats_ipv6_file_path = /tmp/fastnetmon_ipv6.dat
+
+# 8. Cấu hình log
 logging_level = info
 EOF
 
