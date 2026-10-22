@@ -1,0 +1,13 @@
+# Logs & temporary files
+*.log
+/var/log/
+/tmp/fastnetmon_dump_cache/
+PASS:
+
+# Database & local state
+*.db
+/var/lib/fastnetmon_guard/
+
+# OS specific
+.DS_Store
+Thumbs.db
