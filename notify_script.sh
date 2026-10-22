@@ -110,13 +110,13 @@ extract_top_dst_port() {
 
     local top_port=""
 
-    # Method 1: "UDP port: XXXXX", "TCP port: XXXXX", "dst port: XXXXX" hoặc "destination port: XXXXX"
-    top_port=$(grep -iE "(dst port|destination port|(udp|tcp)[[:space:]]+port)[[:space:]]*:?[[:space:]]*([0-9]+)" \
-        "$dump_file" \
-        | grep -oE '[0-9]{4,5}' \
-        | awk '!seen[$0]++' \
-        | head -1)
-    [[ -n "$top_port" ]] && { log "info" "Port (method 1 - top ports): $top_port"; echo "$top_port"; return; }
+    # Method 1: Trích xuất chính xác số port đi liền sau từ khóa port
+    top_port=$(sed -nE 's/.*(dst port|destination port|(udp|tcp)[[:space:]]+port)[[:space:]]*:?[[:space:]]*([0-9]{1,5}).*/\3/ip' "$dump_file" | head -1)
+    if [[ -n "$top_port" && "$top_port" =~ ^[0-9]+$ && "$top_port" -ge 1 && "$top_port" -le 65535 ]]; then
+        log "info" "Port (method 1 - top ports): $top_port"
+        echo "$top_port"
+        return
+    fi
 
     # Method 2: Packet lines "-> Dst: IP:PORT" - lấy port phổ biến nhất
     top_port=$(grep -oE '(->|Dst:)[[:space:]]*[0-9.]+:([0-9]{4,5})' "$dump_file" \

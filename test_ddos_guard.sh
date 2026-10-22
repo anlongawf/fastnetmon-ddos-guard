@@ -448,6 +448,10 @@ test_7_discord_and_ptero() {
             echo "🚗 GTA FiveM"
         elif echo "$name" | grep -qiE "(minecraft|mc |bedrock|java|paper|spigot|bungeecord|velocity)"; then
             echo "⛏️ Minecraft"
+        elif echo "$name" | grep -qiE "(samp|sa-mp|san andreas|openmp|open.mp)"; then
+            echo "🔫 SA-MP"
+        elif echo "$name" | grep -qiE "(the isle|the_isle|theisle|evrima)"; then
+            echo "🦖 The Isle"
         elif [[ "$egg_id" == "1" || "$egg_id" == "2" || "$egg_id" == "14" ]]; then
             echo "⛏️ Minecraft"
         elif [[ "$egg_id" == "15" || "$egg_id" == "16" ]]; then
@@ -457,10 +461,12 @@ test_7_discord_and_ptero() {
         fi
     }
 
-    local g1 g2 g3
+    local g1 g2 g3 g4 g5
     g1=$(detect_game_type '{"name":"City RP FiveM Vietnam","egg_id":15}')
     g2=$(detect_game_type '{"name":"Survival SMP 1.20","egg_id":1}')
-    g3=$(detect_game_type '{"name":"Custom App","egg_id":99}')
+    g3=$(detect_game_type '{"name":"VN-RP San Andreas MultiPlayer","egg_id":99}')
+    g4=$(detect_game_type '{"name":"The Isle Evrima Survival","egg_id":99}')
+    g5=$(detect_game_type '{"name":"Custom App","egg_id":99}')
 
     if [[ "$g1" == *"FiveM"* ]]; then
         pass "Game detection FiveM đúng: $g1"
@@ -474,10 +480,22 @@ test_7_discord_and_ptero() {
         fail "Game detection Minecraft sai: $g2"
     fi
 
-    if [[ "$g3" == *"Game Server"* ]]; then
-        pass "Game detection Unknown fallback đúng: $g3"
+    if [[ "$g3" == *"SA-MP"* ]]; then
+        pass "Game detection SA-MP đúng: $g3"
     else
-        fail "Game detection Unknown fallback sai: $g3"
+        fail "Game detection SA-MP sai: $g3"
+    fi
+
+    if [[ "$g4" == *"The Isle"* ]]; then
+        pass "Game detection The Isle đúng: $g4"
+    else
+        fail "Game detection The Isle sai: $g4"
+    fi
+
+    if [[ "$g5" == *"Game Server"* ]]; then
+        pass "Game detection Unknown fallback đúng: $g5"
+    else
+        fail "Game detection Unknown fallback sai: $g5"
     fi
 }
 
