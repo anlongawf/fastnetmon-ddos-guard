@@ -59,18 +59,26 @@ int xdp_ddos_guard_filter(struct xdp_md *ctx) {
     if ((void *)(ip + 1) > data_end)
         return XDP_PASS;
 
+    __u32 ip_hdr_len = ip->ihl * 4;
+    if (ip_hdr_len < sizeof(struct iphdr))
+        return XDP_PASS;
+    if ((void *)ip + ip_hdr_len > data_end)
+        return XDP_PASS;
+
     __u32 dest_ip = ip->daddr;
     __u8 protocol = ip->protocol;
     __u16 dest_port = 0;
 
+    void *trans_hdr = (void *)ip + ip_hdr_len;
+
     // 3. Trích xuất Destination Port theo giao thức
     if (protocol == IPPROTO_UDP) {
-        struct udphdr *udp = (void *)ip + (ip->ihl * 4);
+        struct udphdr *udp = trans_hdr;
         if ((void *)(udp + 1) > data_end)
             return XDP_PASS;
         dest_port = bpf_ntohs(udp->dest);
     } else if (protocol == IPPROTO_TCP) {
-        struct tcphdr *tcp = (void *)ip + (ip->ihl * 4);
+        struct tcphdr *tcp = trans_hdr;
         if ((void *)(tcp + 1) > data_end)
             return XDP_PASS;
         dest_port = bpf_ntohs(tcp->dest);
@@ -93,7 +101,7 @@ int xdp_ddos_guard_filter(struct xdp_md *ctx) {
     if (stats) {
         // Cập nhật thống kê packet & byte bị drop
         __sync_fetch_and_add(&stats->dropped_packets, 1);
-        __sync_fetch_and_add(&stats->dropped_bytes, (data_end - data));
+        __sync_fetch_and_add(&stats->dropped_bytes, (__u64)((long)data_end - (long)data));
         
         // DROP SIÊU TỐC: Hủy gói tin ngay tại Driver card mạng!
         return XDP_DROP;
@@ -110,7 +118,7 @@ int xdp_ddos_guard_filter(struct xdp_md *ctx) {
         stats = bpf_map_lookup_elem(&fnm_blocked_map, &proto_key);
         if (stats) {
             __sync_fetch_and_add(&stats->dropped_packets, 1);
-            __sync_fetch_and_add(&stats->dropped_bytes, (data_end - data));
+            __sync_fetch_and_add(&stats->dropped_bytes, (__u64)((long)data_end - (long)data));
             return XDP_DROP;
         }
     }

@@ -39,7 +39,7 @@ DUMP_CACHE_DIR="${DUMP_CACHE_DIR:-/tmp/fastnetmon_dump_cache}"
 # --- Cấu hình iptables ---
 IPTABLES_CHAIN="${IPTABLES_CHAIN:-FNM_DDOS_GUARD}"
 IPTABLES_TABLE="${IPTABLES_TABLE:-raw}"
-IPT_CMD="${IPT_CMD:-/sbin/iptables}"
+IPT_CMD="${IPT_CMD:-$(command -v iptables 2>/dev/null || echo /sbin/iptables)}"
 
 # --- Thời gian ban mặc định (giây) ---
 DEFAULT_BAN_DURATION="${DEFAULT_BAN_DURATION:-900}"   # 15 phút
@@ -72,7 +72,10 @@ log() {
     local level="$1"; shift
     local msg="$*"
     local ts; ts=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$ts] [$level] $msg" >> "$LOG_FILE" 2>/dev/null || true
+    local log_dir; log_dir="$(dirname "$LOG_FILE")"
+    if [[ -w "$LOG_FILE" || ( -d "$log_dir" && -w "$log_dir" ) ]]; then
+        echo "[$ts] [$level] $msg" >> "$LOG_FILE" 2>/dev/null || true
+    fi
     echo "[$ts] [$level] $msg" >&2
     logger -t "fnm_guard" -p "daemon.${level}" "$msg" 2>/dev/null || true
 }
@@ -100,12 +103,23 @@ read_stdin_dump() {
     local target_ip="$1"
     local cache_file="$DUMP_CACHE_DIR/dump_${target_ip}_$(date +%s).txt"
 
-    if timeout 5 cat > "$cache_file" 2>/dev/null && [[ -s "$cache_file" ]]; then
-        echo "$cache_file"; return
+    # Đảm bảo thư mục cache ghi được, nếu không fallback về /tmp
+    if [[ ! -w "$DUMP_CACHE_DIR" ]]; then
+        cache_file="/tmp/dump_${target_ip}_$(date +%s).txt"
+    fi
+
+    if command -v timeout &>/dev/null; then
+        if timeout 5 cat > "$cache_file" 2>/dev/null && [[ -s "$cache_file" ]]; then
+            echo "$cache_file"; return 0
+        fi
+    else
+        if cat > "$cache_file" 2>/dev/null && [[ -s "$cache_file" ]]; then
+            echo "$cache_file"; return 0
+        fi
     fi
 
     local fnm_dump="/tmp/fastnetmon_${target_ip}.dump"
-    [[ -f "$fnm_dump" ]] && cp "$fnm_dump" "$cache_file" && echo "$cache_file" && return
+    [[ -f "$fnm_dump" ]] && cp "$fnm_dump" "$cache_file" 2>/dev/null && echo "$cache_file" && return 0
 
     echo ""
 }
@@ -117,52 +131,52 @@ read_stdin_dump() {
 #   {"destination_port": 30120}
 extract_top_dst_port() {
     local dump_file="$1"
-    [[ -z "$dump_file" || ! -f "$dump_file" ]] && { log "warn" "Không có dump file"; echo ""; return; }
+    [[ -z "$dump_file" || ! -f "$dump_file" ]] && { log "warn" "Không có dump file"; echo ""; return 0; }
 
     local top_port=""
 
     # Method 1: Trích xuất chính xác số port đi liền sau từ khóa port
-    top_port=$(sed -nE 's/.*(dst port|destination port|(udp|tcp)[[:space:]]+port)[[:space:]]*:?[[:space:]]*([0-9]{1,5}).*/\3/ip' "$dump_file" | head -1)
+    top_port=$(sed -nE 's/.*(dst port|destination port|(udp|tcp)[[:space:]]+port)[[:space:]]*:?[[:space:]]*([0-9]{1,5}).*/\3/ip' "$dump_file" 2>/dev/null | head -1 || true)
     if [[ -n "$top_port" && "$top_port" =~ ^[0-9]+$ && "$top_port" -ge 1 && "$top_port" -le 65535 ]]; then
         log "info" "Port (method 1 - top ports): $top_port"
         echo "$top_port"
-        return
+        return 0
     fi
 
     # Method 2: Packet lines "-> Dst: IP:PORT" - lấy port phổ biến nhất
-    top_port=$(grep -oE '(->|Dst:)[[:space:]]*[0-9.]+:([0-9]{4,5})' "$dump_file" \
+    top_port=$(grep -oE '(->|Dst:)[[:space:]]*[0-9.]+:([0-9]{4,5})' "$dump_file" 2>/dev/null \
         | grep -oE '[0-9]{4,5}$' \
         | sort | uniq -c | sort -rn \
-        | awk 'NR==1{print $2}')
-    [[ -n "$top_port" ]] && { log "info" "Port (method 2 - packet lines): $top_port"; echo "$top_port"; return; }
+        | awk 'NR==1{print $2}' || true)
+    [[ -n "$top_port" ]] && { log "info" "Port (method 2 - packet lines): $top_port"; echo "$top_port"; return 0; }
 
     # Method 3: JSON format
-    top_port=$(grep -oE '"destination_port"[[:space:]]*:[[:space:]]*([0-9]+)' "$dump_file" \
-        | grep -oE '[0-9]+$' | head -1)
-    [[ -n "$top_port" ]] && { log "info" "Port (method 3 - JSON): $top_port"; echo "$top_port"; return; }
+    top_port=$(grep -oE '"destination_port"[[:space:]]*:[[:space:]]*([0-9]+)' "$dump_file" 2>/dev/null \
+        | grep -oE '[0-9]+$' | head -1 || true)
+    [[ -n "$top_port" ]] && { log "info" "Port (method 3 - JSON): $top_port"; echo "$top_port"; return 0; }
 
     # Method 4: Fallback - port phổ biến nhất trong toàn dump (loại trừ port thông thường 80, 443, 22)
-    top_port=$(grep -oE ':[0-9]{4,5}' "$dump_file" \
+    top_port=$(grep -oE ':[0-9]{4,5}' "$dump_file" 2>/dev/null \
         | tr -d ':' \
         | grep -vE '^(80|443|22|21|23|53|8080|8443)$' \
         | sort | uniq -c | sort -rn \
-        | awk 'NR==1{print $2}')
+        | awk 'NR==1{print $2}' || true)
     log "warn" "Port (method 4 - fallback frequency): $top_port"
     echo "$top_port"
 }
 
 extract_traffic_stats() {
     local dump_file="$1"
-    [[ -z "$dump_file" || ! -f "$dump_file" ]] && { echo "N/A"; return; }
+    [[ -z "$dump_file" || ! -f "$dump_file" ]] && { echo "N/A"; return 0; }
 
     local pps mbps
-    pps=$(grep -iE "(pps|packets per second)" "$dump_file" \
+    pps=$(grep -iE "(pps|packets per second)" "$dump_file" 2>/dev/null \
         | grep -oE '[0-9]+[[:space:]]*(pps|packets)' \
         | grep -oE '^[0-9]+' \
-        | sort -rn | head -1)
-    mbps=$(grep -iE "(mbps|gbps|bandwidth)" "$dump_file" \
+        | sort -rn | head -1 || true)
+    mbps=$(grep -iE "(mbps|gbps|bandwidth)" "$dump_file" 2>/dev/null \
         | grep -oE '[0-9]+[[:space:]]*(mbps|gbps)' \
-        | head -1)
+        | head -1 || true)
 
     local result="${pps:+${pps} PPS}"
     [[ -n "$mbps" ]] && result="${result:+$result / }${mbps}"
@@ -379,7 +393,7 @@ block_port() {
 
     local ts; ts=$(date '+%Y-%m-%d %H:%M:%S')
     local unban_ts
-    unban_ts=$(date -d "+${DEFAULT_BAN_DURATION} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "N/A")
+    unban_ts=$(date -d "+${DEFAULT_BAN_DURATION} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -v "+${DEFAULT_BAN_DURATION}S" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "N/A")
 
     db_lock
     if [[ -f "$BLOCKED_PORTS_FILE" ]]; then
@@ -508,7 +522,7 @@ send_discord_ban() {
     local ip="$1" port="$2" proto="$3" game="$4" stats="$5"
     local server_name="${6:-N/A}" server_id="${7:-N/A}"
     local ban_min=$(( DEFAULT_BAN_DURATION / 60 ))
-    local unban_ts; unban_ts=$(date -d "+${DEFAULT_BAN_DURATION} seconds" '+%H:%M:%S' 2>/dev/null || date '+%H:%M:%S')
+    local unban_ts; unban_ts=$(date -d "+${DEFAULT_BAN_DURATION} seconds" '+%H:%M:%S' 2>/dev/null || date -v "+${DEFAULT_BAN_DURATION}S" '+%H:%M:%S' 2>/dev/null || date '+%H:%M:%S')
 
     local ptero_fields='[]'
     if [[ "$server_id" != "N/A" && "$server_id" != "" ]]; then
@@ -617,14 +631,14 @@ handle_ban() {
     if [[ -z "$blocked_port" ]]; then
         log "error" "Không xác định được destination port! Abort."
         send_discord_warn "$target_ip" "Không trích xuất được destination port từ dump.\nCần kiểm tra và xử lý thủ công!"
-        return 1
+        return 0
     fi
 
     # Kiểm tra tính hợp lệ của port
     if [[ ! "$blocked_port" =~ ^[0-9]+$ || "$blocked_port" -lt 1 || "$blocked_port" -gt 65535 ]]; then
         log "error" "Giá trị port không hợp lệ ($blocked_port)! Abort."
         send_discord_warn "$target_ip" "Giá trị port trích xuất không hợp lệ: \`$blocked_port\`.\nCần kiểm tra thủ công!"
-        return 1
+        return 0
     fi
 
     # Bảo vệ chống khóa ngoài (Anti-Lockout Protection): Tuyệt đối không ngắt port SSH/Web/Wings
@@ -685,9 +699,11 @@ handle_unban() {
         while IFS= read -r ipt_port; do
             if [[ -n "$ipt_port" ]]; then
                 local exists=false
-                for existing in "${all_ports_to_unblock[@]:-}"; do
-                    [[ "$existing" == "$ipt_port" ]] && { exists=true; break; }
-                done
+                if [[ ${#all_ports_to_unblock[@]} -gt 0 ]]; then
+                    for existing in "${all_ports_to_unblock[@]}"; do
+                        [[ "$existing" == "$ipt_port" ]] && { exists=true; break; }
+                    done
+                fi
                 if [[ "$exists" == "false" ]]; then
                     all_ports_to_unblock+=("$ipt_port")
                     log "info" "Kernel Fallback: Phát hiện rule sót trong iptables cho port $ipt_port (IP: $target_ip)"
@@ -696,7 +712,7 @@ handle_unban() {
         done < <("$IPT_CMD" -t "$IPTABLES_TABLE" -S "$IPTABLES_CHAIN" 2>/dev/null \
             | grep -E "\-d[[:space:]]+${target_ip}(/32)?" \
             | grep -oE "\-\-dport[[:space:]]+[0-9]+" \
-            | awk '{print $2}' | sort -u)
+            | awk '{print $2}' | sort -u || true)
 
         # Kiểm tra xem có rule ICMP DROP nào của IP này không
         if "$IPT_CMD" -t "$IPTABLES_TABLE" -S "$IPTABLES_CHAIN" 2>/dev/null \
@@ -709,11 +725,18 @@ handle_unban() {
             "$IPT_CMD" -t "$IPTABLES_TABLE" -D "$IPTABLES_CHAIN" -d "$target_ip" -j DROP 2>/dev/null || break
             log "info" "Xóa rule DROP IP toàn bộ: -d $target_ip"
         done
+
+        # Dọn sạch rule drop cả IP trong XDP Map (nếu có)
+        local xdp_mgr="/opt/fastnetmon_guard/compile_xdp.sh"
+        [[ ! -f "$xdp_mgr" && -f "$(dirname "${BASH_SOURCE[0]}")/compile_xdp.sh" ]] && xdp_mgr="$(dirname "${BASH_SOURCE[0]}")/compile_xdp.sh"
+        if [[ -f "$xdp_mgr" ]]; then
+            bash "$xdp_mgr" unblock "$target_ip" 0 2>/dev/null || true
+        fi
     fi
 
     if [[ ${#all_ports_to_unblock[@]} -eq 0 ]]; then
         log "warn" "Không có port hoặc rule nào cần unban cho IP $target_ip"
-        return
+        return 0
     fi
 
     for port in "${all_ports_to_unblock[@]}"; do

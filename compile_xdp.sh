@@ -152,15 +152,18 @@ ip_to_hex_bytes() {
 
 port_to_hex_bytes() {
     local port="${1:-0}"
-    local p_num; p_num=$(($port))
+    local p_num=0
+    if [[ "$port" =~ ^[0-9]+$ ]]; then
+        p_num="$port"
+    fi
     local p_low=$(( p_num & 0xFF ))
     local p_high=$(( (p_num >> 8) & 0xFF ))
     printf "%02x %02x" "$p_low" "$p_high"
 }
 
 proto_to_hex() {
-    local proto="${1:-udp}"
-    case "${proto,,}" in
+    local proto; proto=$(echo "${1:-udp}" | tr '[:upper:]' '[:lower:]')
+    case "$proto" in
         tcp)  printf "06" ;;
         icmp) printf "01" ;;
         *)    printf "11" ;; # udp default
@@ -175,14 +178,23 @@ xdp_map_block() {
     local ip_hex port_hex proto_hex
     ip_hex=$(ip_to_hex_bytes "$target_ip")
     port_hex=$(port_to_hex_bytes "$port")
-    proto_hex=$(proto_to_hex "$proto")
-
-    # Key: dest_ip(4) + dest_port(2) + protocol(1) + pad(1) = 8 bytes
-    local key_hex="$ip_hex $port_hex $proto_hex 00"
     # Value: dropped_packets(8) + dropped_bytes(8) = 16 bytes zero
     local val_hex="00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 
-    bpftool map update pinned "$PINNED_MAP" key hex $key_hex value hex $val_hex 2>/dev/null || true
+    local proto_clean; proto_clean=$(echo "$proto" | tr '[:upper:]' '[:lower:]')
+
+    if [[ "$proto_clean" == "icmp" || "$port" == "0" ]]; then
+        proto_hex=$(proto_to_hex "$proto_clean")
+        local key_hex="$ip_hex $port_hex $proto_hex 00"
+        bpftool map update pinned "$PINNED_MAP" key hex $key_hex value hex $val_hex 2>/dev/null || true
+    else
+        # Khóa cả UDP và TCP trên port này để ngăn chặn đa dạng vector tấn công
+        for p in udp tcp; do
+            proto_hex=$(proto_to_hex "$p")
+            local key_hex="$ip_hex $port_hex $proto_hex 00"
+            bpftool map update pinned "$PINNED_MAP" key hex $key_hex value hex $val_hex 2>/dev/null || true
+        done
+    fi
     info "XDP BPF Map thêm: IP=$target_ip Port=$port Proto=$proto"
 }
 

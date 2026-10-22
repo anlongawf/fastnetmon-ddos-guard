@@ -79,7 +79,7 @@ info "Số CPU cores phát hiện: ${C_BOLD}${CPU_CORES}${C_RESET} (netflow_work
 
 # Lấy danh sách card mạng thực tế (bỏ qua lo, docker, veth, br, tailscale, vpn)
 DETECTED_IFACES=()
-for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -vE '^(lo|docker[0-9]*|veth.*|br-.*|virbr.*|tailscale.*|tun[0-9]*|wg[0-9]*)'); do
+for iface in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -vE '^(lo|docker[0-9]*|veth.*|br-.*|virbr.*|tailscale.*|tun[0-9]*|wg[0-9]*)' || true); do
     DETECTED_IFACES+=("$iface")
 done
 
