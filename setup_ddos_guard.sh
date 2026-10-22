@@ -60,9 +60,9 @@ header "BƯỚC 1: KIỂM TRA HỆ THỐNG & CARD MẠNG"
 CPU_CORES=$(nproc 2>/dev/null || echo 2)
 info "Số CPU cores phát hiện: ${C_BOLD}${CPU_CORES}${C_RESET} (netflow_workers = $CPU_CORES)"
 
-# Lấy danh sách card mạng thực tế (bỏ qua lo, docker, veth, br)
+# Lấy danh sách card mạng thực tế (bỏ qua lo, docker, veth, br, tailscale, vpn)
 DETECTED_IFACES=()
-for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -vE '^(lo|docker[0-9]*|veth.*|br-.*|virbr.*)'); do
+for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -vE '^(lo|docker[0-9]*|veth.*|br-.*|virbr.*|tailscale.*|tun[0-9]*|wg[0-9]*)'); do
     DETECTED_IFACES+=("$iface")
 done
 
@@ -278,6 +278,17 @@ pass "Đã cài đặt notify_script.sh thành công!"
 info "Đang ghi danh sách mạng /etc/fastnetmon_networks_list..."
 echo "$SERVER_PUBLIC_IP/32" > /etc/fastnetmon_networks_list
 pass "Đã thêm $SERVER_PUBLIC_IP/32 vào /etc/fastnetmon_networks_list"
+
+# Tạo file whitelist tự động bảo vệ Tailscale (Panel <-> Wings) và localhost
+info "Đang cấu hình /etc/fastnetmon_whitelist..."
+cat > /etc/fastnetmon_whitelist << 'WHITELIST'
+127.0.0.1/32
+100.64.0.0/10       # Tailscale CGNAT IP range (Wings <-> Panel)
+10.0.0.0/8
+172.16.0.0/12
+192.168.0.0/16
+WHITELIST
+pass "Đã cấu hình /etc/fastnetmon_whitelist (Bảo vệ luồng Tailscale giữa Wings & Panel)"
 
 # Ghi file cấu hình FastNetMon (/etc/fastnetmon.conf)
 info "Đang tạo file cấu hình /etc/fastnetmon.conf..."
