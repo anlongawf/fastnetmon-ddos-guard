@@ -25,8 +25,8 @@ set -euo pipefail
 # Tạo webhook: Server Settings → Integrations → Webhooks → New Webhook
 DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN"
 
-# --- Pterodactyl API ---
-PTERO_ENABLED=true
+# --- Pterodactyl API (Mặc định tắt, chỉ bật khi muốn tự động suspend server) ---
+PTERO_ENABLED=false
 PTERO_PANEL_URL="https://panel.yourdomain.com"   # Không có dấu / cuối
 PTERO_API_KEY="ptla_YOUR_APPLICATION_API_KEY"    # Admin > Application API
 PTERO_ACTION="suspend"                            # "suspend" hoặc "kill"
