@@ -49,7 +49,7 @@ header() { echo -e "\n${CYAN}═════════════════
 # Kiểm tra quyền root (chỉ bắt buộc khi chạy test liên quan đến iptables)
 check_root() {
     local test_id="${1:-all}"
-    if [[ "$test_id" =~ ^(2|7|8|10)$ ]]; then
+    if [[ "$test_id" =~ ^(2|7|8|10|11)$ ]]; then
         return 0
     fi
     if [[ $EUID -ne 0 ]]; then
@@ -634,6 +634,52 @@ test_10_anti_lockout() {
 }
 
 # =============================================================================
+# TEST 11: Kiểm tra XDP / eBPF Engine
+# =============================================================================
+test_11_xdp_engine() {
+    header "11" "Kiểm tra XDP / eBPF Engine và Tools"
+
+    local xdp_c="$SCRIPT_DIR/xdp_guard.c"
+    local xdp_mgr="$SCRIPT_DIR/compile_xdp.sh"
+
+    # 1. Kiểm tra mã nguồn C của XDP
+    if [[ -f "$xdp_c" ]]; then
+        pass "File mã nguồn XDP tồn tại: $xdp_c"
+        if grep -q "fnm_blocked_map" "$xdp_c" && grep -q "XDP_DROP" "$xdp_c"; then
+            pass "Cấu trúc eBPF Map và XDP_DROP hợp lệ"
+        else
+            fail "Mã nguồn XDP thiếu BPF map hoặc XDP_DROP!"
+        fi
+    else
+        fail "Không tìm thấy $xdp_c"
+    fi
+
+    # 2. Kiểm tra script quản lý compile_xdp.sh
+    if [[ -x "$xdp_mgr" ]]; then
+        pass "Script quản lý XDP tồn tại và có quyền thực thi: $xdp_mgr"
+    else
+        fail "Script $xdp_mgr chưa có quyền thực thi hoặc không tồn tại!"
+    fi
+
+    # 3. Kiểm tra logic chuyển đổi Hex trong compile_xdp.sh
+    local ip_hex port_hex
+    ip_hex=$(bash -c "source '$xdp_mgr' 2>/dev/null; ip_to_hex_bytes '127.0.0.1'" 2>/dev/null || echo "")
+    port_hex=$(bash -c "source '$xdp_mgr' 2>/dev/null; port_to_hex_bytes 25565" 2>/dev/null || echo "")
+
+    if [[ "$ip_hex" == "7f 00 00 01" ]]; then
+        pass "Hàm ip_to_hex_bytes hoạt động chính xác (127.0.0.1 -> $ip_hex)"
+    else
+        fail "Hàm ip_to_hex_bytes sai kết quả: $ip_hex"
+    fi
+
+    if [[ "$port_hex" == "dd 63" ]]; then
+        pass "Hàm port_to_hex_bytes hoạt động chính xác (Port 25565 Little-Endian -> $port_hex)"
+    else
+        fail "Hàm port_to_hex_bytes sai kết quả: $port_hex"
+    fi
+}
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 print_summary() {
@@ -686,6 +732,7 @@ main() {
         8) test_8_fastnetmon_config ;;
         9) test_9_iptables_stress ;;
         10) test_10_anti_lockout ;;
+        11) test_11_xdp_engine ;;
         all|*)
             test_1_prerequisites
             test_2_port_extraction
@@ -697,6 +744,7 @@ main() {
             test_8_fastnetmon_config
             test_9_iptables_stress
             test_10_anti_lockout
+            test_11_xdp_engine
             ;;
     esac
 

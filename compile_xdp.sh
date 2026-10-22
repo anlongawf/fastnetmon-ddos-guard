@@ -204,28 +204,30 @@ xdp_map_unblock() {
     info "XDP BPF Map gỡ: IP=$target_ip Port=$port"
 }
 
-case "${1:-status}" in
-    build)
-        check_root
-        build_xdp
-        ;;
-    attach)
-        attach_xdp "${2:-eth0}"
-        ;;
-    detach)
-        detach_xdp "${2:-eth0}"
-        ;;
-    status)
-        status_xdp "${2:-eth0}"
-        ;;
-    block)
-        xdp_map_block "${2:-}" "${3:-0}" "${4:-udp}"
-        ;;
-    unblock)
-        xdp_map_unblock "${2:-}" "${3:-0}" "${4:-udp}"
-        ;;
-    *)
-        echo "Cách dùng: $0 {build|attach <iface>|detach <iface>|status <iface>|block <IP> <PORT> [PROTO]|unblock <IP> <PORT>}"
-        exit 1
-        ;;
-esac
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    case "${1:-status}" in
+        build)
+            check_root
+            build_xdp
+            ;;
+        attach)
+            attach_xdp "${2:-eth0}"
+            ;;
+        detach)
+            detach_xdp "${2:-eth0}"
+            ;;
+        status)
+            status_xdp "${2:-eth0}"
+            ;;
+        block)
+            xdp_map_block "${2:-}" "${3:-0}" "${4:-udp}"
+            ;;
+        unblock)
+            xdp_map_unblock "${2:-}" "${3:-0}" "${4:-udp}"
+            ;;
+        *)
+            echo "Cách dùng: $0 {build|attach <iface>|detach <iface>|status <iface>|block <IP> <PORT> [PROTO]|unblock <IP> <PORT>}"
+            exit 1
+            ;;
+    esac
+fi
