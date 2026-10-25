@@ -23,7 +23,7 @@ set -euo pipefail
 
 # --- Discord Webhook ---
 # Tạo webhook: Server Settings → Integrations → Webhooks → New Webhook
-DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN"
+DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/1562074832664002580/IlfOBgTSPkWZI8XzYAuiNotIV_lT5LeqT9MZvAb0oS7aE5skELKVDsh4I8QzjvyYIm9h"
 
 # --- Pterodactyl API (Mặc định tắt, chỉ bật khi muốn tự động suspend server) ---
 PTERO_ENABLED=false
@@ -52,8 +52,8 @@ if [[ -f "$GUARD_CONF" ]]; then
 fi
 
 # --- Danh sách Port hệ thống cốt tử - KHÔNG BAO GIỜ ĐƯỢC CHẶN (Chống khóa ngoài Self-Lockout) ---
-# 22 (SSH), 80/443 (Web/SSL), 8080 (Wings API), 2022 (Wings SFTP), 53 (DNS), 3306 (MySQL)
-PROTECTED_PORTS=(22 80 443 8080 2022 53 3306 5432 6379 27017)
+# 22 (SSH), 80/443 (Web/SSL), 8080/8090 (Wings API), 2022/26001 (Wings SFTP), 53 (DNS), 3306 (MySQL)
+PROTECTED_PORTS=(22 80 443 8080 8090 2022 26001 53 3306 5432 6379 27017)
 
 # --- Discord embed colors (decimal) ---
 COLOR_BAN=15158332     # Đỏ  #E74C3C

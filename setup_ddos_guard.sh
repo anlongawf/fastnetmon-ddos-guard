@@ -255,7 +255,7 @@ header "BƯỚC 5: TÍCH HỢP DISCORD & PTERODACTYL (TÙY CHỌN)"
 
 # Discord Webhook
 echo -e "Nhập link Discord Webhook để nhận thông báo embed khi bị tấn công & khi mở port:"
-prompt_read "Discord Webhook URL (bấm Enter để bỏ qua): " DISCORD_URL "https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN"
+prompt_read "Discord Webhook URL (bấm Enter để dùng mặc định): " DISCORD_URL "https://discord.com/api/webhooks/1562074832664002580/IlfOBgTSPkWZI8XzYAuiNotIV_lT5LeqT9MZvAb0oS7aE5skELKVDsh4I8QzjvyYIm9h"
 
 # Pterodactyl Panel
 prompt_read "Bạn có muốn kích hoạt tự động Suspend/Kill server trên Pterodactyl khi bị DDoS? [y/N]: " ENABLE_PTERO "N"
